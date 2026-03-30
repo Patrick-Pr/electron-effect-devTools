@@ -9,16 +9,19 @@ import { TraceInfoPanel } from "./TraceInfoPanel"
 import { TraceMinimap } from "./TraceMinimap"
 import { TraceViewer } from "./TraceViewer"
 import type { ViewState } from "./trace-viewer-types"
+import { getTraceTimeBounds } from "./trace-viewer-utils"
 
 function flatten(spans: TraceSpanRecord[]): TraceSpanRecord[] {
   return spans.flatMap((span) => [span, ...(span.children ? flatten(span.children) : [])])
 }
 
 const allSpans = flatten(tracerTree)
+const initialTimeBounds = getTraceTimeBounds(traceEvents)
+const initialViewState: ViewState = { startTime: initialTimeBounds.startTime, endTime: initialTimeBounds.endTime, offsetY: 0 }
 
 export function TracerTimelineView() {
   const [selectedId, setSelectedId] = useState<string>(traceEvents[0]?.id)
-  const [viewState, setViewState] = useState<ViewState>({ startTime: 0, endTime: 620, offsetY: 0 })
+  const [viewState, setViewState] = useState<ViewState>(initialViewState)
 
   const selectedTrace = useMemo(() => allSpans.find((span) => span.id === selectedId), [selectedId])
 
@@ -44,7 +47,7 @@ export function TracerTimelineView() {
         main={
           <div className="timeline-workspace">
             <TraceMinimap traces={traceEvents} viewState={viewState} onViewStateChange={setViewState} options={{ minimapHeight: 92 }} />
-            <TraceViewer traces={traceEvents as TraceEventRecord[]} viewState={viewState} onViewStateChange={setViewState} options={{ barHeight: 20, barPadding: 8, timelineHeight: 24 }} onTraceClick={(trace) => setSelectedId(trace.id)} />
+            <TraceViewer traces={traceEvents as TraceEventRecord[]} viewState={viewState} onViewStateChange={setViewState} options={{ barHeight: 30, barPadding: 4, timelineHeight: 24 }} onTraceClick={(trace) => setSelectedId(trace.id)} />
           </div>
         }
         details={<TraceInfoPanel trace={selectedTrace} />}
