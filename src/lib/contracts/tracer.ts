@@ -1,4 +1,4 @@
-import type { LocationRecord, VariableRecord } from "./debug"
+import type { LocationRecord, VariableRecord } from "./debug.js"
 
 export interface TraceEventRecord {
   id: string

@@ -1,12 +1,27 @@
 import path from "node:path"
-import { app, BrowserWindow } from "electron"
+import { fileURLToPath } from "node:url"
+import { app, BrowserWindow, ipcMain } from "electron"
+import type { BackendCommand } from "../src/lib/contracts/backend.js"
+import { DevtoolsBackend } from "./backend/devtools-backend.js"
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL
 const rendererDist = process.env.ELECTRON_RENDERER_DIST
   ? path.join(process.cwd(), process.env.ELECTRON_RENDERER_DIST)
   : path.join(process.cwd(), "dist")
 
-const preloadPath = path.join(__dirname, "preload.js")
+const currentDir = path.dirname(fileURLToPath(import.meta.url))
+const preloadPath = path.join(currentDir, "preload.cjs")
+const backend = new DevtoolsBackend()
+
+function registerWindowSubscription(window: BrowserWindow) {
+  const unsubscribe = backend.subscribe((snapshot) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send("backend:state", { type: "backend:state", snapshot })
+    }
+  })
+
+  window.on("closed", unsubscribe)
+}
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -24,6 +39,8 @@ function createWindow() {
     }
   })
 
+  registerWindowSubscription(window)
+
   if (devServerUrl) {
     window.loadURL(devServerUrl)
   } else {
@@ -31,8 +48,12 @@ function createWindow() {
   }
 }
 
+ipcMain.handle("backend:get-snapshot", () => backend.getSnapshot())
+ipcMain.handle("backend:dispatch", (_event, command: BackendCommand) => backend.dispatch(command))
+
 app.whenReady().then(() => {
   createWindow()
+  void backend.dispatch({ type: "server:start" })
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

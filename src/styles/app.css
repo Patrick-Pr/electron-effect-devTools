@@ -155,6 +155,11 @@
   color: #c2f0c8;
 }
 
+.badge--warning {
+  background: rgba(210, 153, 34, 0.16);
+  color: #f3d58b;
+}
+
 .icon-button,
 .secondary-button,
 .primary-button,

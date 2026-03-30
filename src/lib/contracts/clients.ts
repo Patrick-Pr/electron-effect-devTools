@@ -2,9 +2,10 @@ export interface ClientRecord {
   id: number
   name: string
   transport: string
-  pid: number
+  pid?: number
   active: boolean
-  lastSeen: string
+  status: "connected" | "disconnected"
+  lastSeen?: string
 }
 
 export interface RunningState {

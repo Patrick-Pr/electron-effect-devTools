@@ -1,10 +1,13 @@
 /// <reference types="vite/client" />
 
+import type { BackendCommand, BackendSnapshot, BackendSubscriptionEvent } from "./lib/contracts/backend"
+import type { LocationRecord } from "./lib/contracts/debug"
+
 interface ElectronAPI {
-  appName: string
-  version: string
-  revealLocation: (location: { path: string; line: number; column: number }) => void
-  invokeAction: (action: string, payload?: unknown) => void
+  getSnapshot: () => Promise<BackendSnapshot>
+  dispatch: (command: BackendCommand) => Promise<void>
+  subscribe: (listener: (event: BackendSubscriptionEvent) => void) => () => void
+  revealLocation: (location: LocationRecord) => Promise<void>
 }
 
 declare global {

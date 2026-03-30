@@ -1,10 +1,11 @@
+import { EmptyState } from "../../components/common/EmptyState"
 import { Panel } from "../../components/panel/Panel"
 import { PanelHeader } from "../../components/panel/PanelHeader"
 import { TreeView } from "../../components/tree/TreeView"
 import type { TreeNodeData } from "../../components/tree/tree-types"
+import { useBackendSnapshot } from "../../lib/backend/BackendProvider"
 import type { TraceSpanRecord } from "../../lib/contracts/tracer"
 import { invokePreviewAction, revealPreviewLocation } from "../../mocks/actions"
-import { tracerTree } from "../../mocks/tracer"
 
 function spanChildren(span: TraceSpanRecord): TreeNodeData[] {
   const items: TreeNodeData[] = [
@@ -48,7 +49,7 @@ function toTreeNode(span: TraceSpanRecord): TreeNodeData {
     icon: span.name === "External Span" ? "⬡" : "◌",
     children: spanChildren(span),
     actions: [
-      { id: `${span.id}-reset`, label: "Reset tracer", icon: "↺", onSelect: () => invokePreviewAction("tracer:reset") },
+      { id: `${span.id}-reset`, label: "Reset tracer", icon: "↺", onSelect: () => invokePreviewAction({ type: "tracer:reset" }) },
       ...(span.location
         ? [{ id: `${span.id}-reveal`, label: "Reveal span location", icon: "↗", onSelect: () => revealPreviewLocation(span.location!.path, span.location!.line, span.location!.column) }]
         : [])
@@ -57,14 +58,16 @@ function toTreeNode(span: TraceSpanRecord): TreeNodeData {
 }
 
 export function TracerTreeView() {
+  const { tracer } = useBackendSnapshot()
+
   return (
     <Panel>
       <PanelHeader
         title="Tracer"
         subtitle="Mirror the extension tree with span metadata, events, and nested child spans."
-        actions={<button className="secondary-button" onClick={() => invokePreviewAction("tracer:reset")}>Reset tracer</button>}
+        actions={<button className="secondary-button" onClick={() => invokePreviewAction({ type: "tracer:reset" })}>Reset tracer</button>}
       />
-      <TreeView nodes={tracerTree.map(toTreeNode)} />
+      {tracer.spans.length > 0 ? <TreeView nodes={tracer.spans.map(toTreeNode)} /> : <EmptyState title="No spans recorded" body="Start the server and connect an Effect runtime with DevTools tracing enabled." />}
     </Panel>
   )
 }
