@@ -1,0 +1,3 @@
+[submodule "submodules/effect-vs-code-extension"]
+	path = submodules/effect-vs-code-extension
+	url = git@github.com:Effect-TS/vscode-extension.git

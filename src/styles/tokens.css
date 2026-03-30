@@ -1,0 +1,50 @@
+:root {
+  color-scheme: dark;
+  --bg-app: #0b1017;
+  --bg-panel: #111823;
+  --bg-panel-alt: #0f151f;
+  --bg-hover: #172130;
+  --bg-selected: #1d2a3d;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text: #e7edf7;
+  --text-muted: #91a0b6;
+  --text-dim: #66758b;
+  --accent: #57a6ff;
+  --accent-soft: rgba(87, 166, 255, 0.18);
+  --success: #3fb950;
+  --warning: #e3b341;
+  --shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --font-ui: "SF Pro Text", "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "IBM Plex Mono", "Cascadia Code", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(87, 166, 255, 0.15), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(63, 185, 80, 0.1), transparent 18%),
+    var(--bg-app);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}

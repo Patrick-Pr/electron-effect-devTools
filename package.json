@@ -1,13 +1,37 @@
 {
-  "name": "electron-effect-devTools",
+  "name": "electron-effect-devtools",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Standalone Electron UI replica for Effect Dev Tools",
+  "main": "dist-electron/main.js",
+  "type": "commonjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "concurrently -k \"vite\" \"tsc -p tsconfig.electron.json --watch\" \"wait-on tcp:5173 dist-electron/main.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "tsc -p tsconfig.electron.json && vite build",
+    "preview": "cross-env ELECTRON_RENDERER_DIST=dist electron .",
+    "check": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
   },
-  "keywords": [],
+  "keywords": [
+    "electron",
+    "effect",
+    "devtools"
+  ],
   "author": "",
   "license": "ISC",
-  "packageManager": "pnpm@10.28.0"
+  "packageManager": "pnpm@10.28.0",
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "electron": "^37.4.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7",
+    "wait-on": "^8.0.5"
+  }
 }
