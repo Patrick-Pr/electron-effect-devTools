@@ -1,4 +1,5 @@
-import { type CSSProperties, useCallback, useState } from "react"
+import { useCallback } from "react"
+import clsx from "clsx"
 import type { TreeNode } from "./tree-types"
 
 interface TreeNodeRowProps {
@@ -9,47 +10,7 @@ interface TreeNodeRowProps {
   onToggle: () => void
 }
 
-const rowBase: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  height: "var(--row-height)",
-  paddingRight: "var(--space-3)",
-  cursor: "default",
-  userSelect: "none",
-  fontSize: "var(--font-size-sm)",
-  transition: "background var(--transition-fast)"
-}
-
-const chevronStyle: CSSProperties = {
-  width: 16,
-  height: 16,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  flexShrink: 0,
-  color: "var(--text-tertiary)",
-  transition: "transform var(--transition-fast)"
-}
-
-const labelStyle: CSSProperties = {
-  flex: 1,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-  color: "var(--text-primary)"
-}
-
-const detailStyle: CSSProperties = {
-  marginLeft: "var(--space-2)",
-  color: "var(--text-secondary)",
-  fontSize: "var(--font-size-xs)",
-  fontFamily: "var(--font-mono)",
-  flexShrink: 0
-}
-
 export function TreeNodeRow({ node, depth, expanded, hasChildren, onToggle }: TreeNodeRowProps) {
-  const [hovered, setHovered] = useState(false)
-
   const handleClick = useCallback(() => {
     if (hasChildren) {
       onToggle()
@@ -57,33 +18,33 @@ export function TreeNodeRow({ node, depth, expanded, hasChildren, onToggle }: Tr
     node.onClick?.()
   }, [hasChildren, onToggle, node])
 
-  const style: CSSProperties = {
-    ...rowBase,
-    paddingLeft: depth * 16 + 4,
-    background: hovered ? "var(--bg-hover)" : "transparent",
-    cursor: hasChildren || node.onClick ? "pointer" : "default"
-  }
-
   return (
     <div
-      style={style}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      className={clsx(
+        "flex items-center h-(--row-height) pr-3 select-none text-sm",
+        "transition-[background] duration-(--transition-fast)",
+        "hover:bg-subtle-hover",
+        (hasChildren || node.onClick) ? "cursor-pointer" : "cursor-default"
+      )}
+      style={{ paddingLeft: depth * 16 + 4 }}
       onClick={handleClick}
     >
-      <span style={{
-        ...chevronStyle,
-        transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
-        visibility: hasChildren ? "visible" : "hidden"
-      }}>
+      <span
+        className={clsx(
+          "size-4 flex items-center justify-center shrink-0 text-tertiary",
+          "transition-transform duration-(--transition-fast)",
+          expanded && "rotate-90",
+          !hasChildren && "invisible"
+        )}
+      >
         <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
           <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </span>
-      {node.icon && <span style={{ marginRight: "var(--space-2)", display: "flex", flexShrink: 0 }}>{node.icon}</span>}
-      <span style={labelStyle}>{node.label}</span>
-      {node.badge && <span style={{ marginLeft: "var(--space-2)", flexShrink: 0 }}>{node.badge}</span>}
-      {node.detail && <span style={detailStyle}>{node.detail}</span>}
+      {node.icon && <span className="mr-2 flex shrink-0">{node.icon}</span>}
+      <span className="flex-1 truncate text-primary">{node.label}</span>
+      {node.badge && <span className="ml-2 shrink-0">{node.badge}</span>}
+      {node.detail && <span className="ml-2 shrink-0 text-secondary text-xs font-mono">{node.detail}</span>}
     </div>
   )
 }

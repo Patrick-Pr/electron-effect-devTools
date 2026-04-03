@@ -276,7 +276,7 @@ const TraceViewer: React.FC<TraceViewerProps> = ({
   return (
     <canvas
       ref={canvasRef}
-      style={{ width: "100%", height: "100%", cursor: "grab", display: "block" }}
+      className="w-full h-full block cursor-grab"
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}

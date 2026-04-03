@@ -1,4 +1,5 @@
-import { type CSSProperties, type ReactNode, useCallback, useState } from "react"
+import { type ReactNode, useCallback } from "react"
+import clsx from "clsx"
 
 interface IconButtonProps {
   children: ReactNode
@@ -8,44 +9,25 @@ interface IconButtonProps {
   disabled?: boolean
 }
 
-const baseStyle: CSSProperties = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 26,
-  height: 26,
-  border: "none",
-  borderRadius: "var(--radius-sm)",
-  background: "transparent",
-  color: "var(--text-secondary)",
-  cursor: "pointer",
-  padding: 0,
-  transition: "background var(--transition-fast), color var(--transition-fast)"
-}
-
 export function IconButton({ children, title, onClick, danger, disabled }: IconButtonProps) {
-  const [hovered, setHovered] = useState(false)
-
-  const style: CSSProperties = {
-    ...baseStyle,
-    ...(hovered && !disabled ? {
-      background: "var(--bg-hover)",
-      color: danger ? "var(--accent-red)" : "var(--text-primary)"
-    } : {}),
-    ...(disabled ? { opacity: 0.4, cursor: "default" } : {})
-  }
-
   const handleClick = useCallback(() => {
     if (!disabled) onClick()
   }, [disabled, onClick])
 
   return (
     <button
-      style={style}
+      className={clsx(
+        "inline-flex items-center justify-center size-6.5 border-none rounded-sm bg-transparent text-secondary cursor-pointer p-0",
+        "transition-[background,color] duration-(--transition-fast)",
+        disabled
+          ? "opacity-40 cursor-default"
+          : [
+              "hover:bg-subtle-hover",
+              danger ? "hover:text-accent-red" : "hover:text-primary"
+            ]
+      )}
       title={title}
       onClick={handleClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       disabled={disabled}
     >
       {children}

@@ -116,13 +116,8 @@ const TraceMinimap: React.FC<MinimapProps> = ({
   return (
     <canvas
       ref={canvasRef}
-      style={{
-        width: "100%",
-        height: minimapHeight,
-        cursor: "pointer",
-        display: "block",
-        background: "var(--bg-inset)"
-      }}
+      className="w-full block cursor-pointer bg-inset"
+      style={{ height: minimapHeight }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}

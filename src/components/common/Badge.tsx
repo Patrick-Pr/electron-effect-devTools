@@ -1,16 +1,16 @@
-import type { CSSProperties, ReactNode } from "react"
+import type { ReactNode } from "react"
 
 const variantColors: Record<string, string> = {
-  Counter: "var(--accent-blue)",
-  Gauge: "var(--accent-green)",
-  Histogram: "var(--accent-orange)",
-  Summary: "var(--accent-purple)",
-  Frequency: "var(--accent-yellow)",
-  connected: "var(--status-ok)",
-  disconnected: "var(--text-tertiary)",
-  websocket: "var(--accent-cyan)",
-  browser: "var(--accent-purple)",
-  node: "var(--accent-green)"
+  Counter: "var(--color-accent-blue)",
+  Gauge: "var(--color-accent-green)",
+  Histogram: "var(--color-accent-orange)",
+  Summary: "var(--color-accent-purple)",
+  Frequency: "var(--color-accent-yellow)",
+  connected: "var(--color-status-ok)",
+  disconnected: "var(--color-tertiary)",
+  websocket: "var(--color-accent-cyan)",
+  browser: "var(--color-accent-purple)",
+  node: "var(--color-accent-green)"
 }
 
 interface BadgeProps {
@@ -20,21 +20,18 @@ interface BadgeProps {
 }
 
 export function Badge({ children, variant, color }: BadgeProps) {
-  const resolvedColor = color ?? (variant ? variantColors[variant] : undefined) ?? "var(--text-secondary)"
+  const resolvedColor = color ?? (variant ? variantColors[variant] : undefined) ?? "var(--color-secondary)"
 
-  const style: CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    padding: "1px 6px",
-    borderRadius: "var(--radius-full)",
-    fontSize: "var(--font-size-xs)",
-    fontFamily: "var(--font-mono)",
-    lineHeight: 1.4,
-    color: resolvedColor,
-    background: `color-mix(in srgb, ${resolvedColor} 14%, transparent)`,
-    border: `1px solid color-mix(in srgb, ${resolvedColor} 25%, transparent)`,
-    whiteSpace: "nowrap" as const
-  }
-
-  return <span style={style}>{children}</span>
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-px rounded-full text-xs font-mono leading-[1.4] whitespace-nowrap"
+      style={{
+        color: resolvedColor,
+        background: `color-mix(in srgb, ${resolvedColor} 14%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${resolvedColor} 25%, transparent)`
+      }}
+    >
+      {children}
+    </span>
+  )
 }

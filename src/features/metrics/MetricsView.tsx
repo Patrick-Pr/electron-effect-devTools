@@ -1,23 +1,11 @@
-import { type CSSProperties, useCallback, useState } from "react"
+import { useCallback, useState } from "react"
+import clsx from "clsx"
 import { useBackendSnapshot } from "../../lib/backend/BackendProvider"
 import { PanelHeader } from "../../components/panel/PanelHeader"
 import { IconButton } from "../../components/common/IconButton"
 import { Badge } from "../../components/common/Badge"
 import { EmptyState } from "../../components/common/EmptyState"
 import type { MetricRecord } from "../../lib/contracts/metrics"
-
-const containerStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  height: "100%",
-  overflow: "hidden"
-}
-
-const scrollArea: CSSProperties = {
-  flex: 1,
-  overflow: "auto",
-  padding: "var(--space-2) 0"
-}
 
 const ResetIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -29,112 +17,50 @@ const ResetIcon = () => (
 function MetricCard({ metric }: { metric: MetricRecord }) {
   const [expanded, setExpanded] = useState(metric.defaultExpanded ?? false)
 
-  const cardStyle: CSSProperties = {
-    borderBottom: "1px solid var(--border-muted)"
-  }
-
-  const headerStyle: CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    gap: "var(--space-2)",
-    padding: "var(--space-3) var(--space-4)",
-    cursor: "pointer",
-    transition: "background var(--transition-fast)",
-    userSelect: "none"
-  }
-
-  const chevronStyle: CSSProperties = {
-    width: 14,
-    height: 14,
-    color: "var(--text-tertiary)",
-    transition: "transform var(--transition-fast)",
-    transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
-    flexShrink: 0
-  }
-
-  const nameStyle: CSSProperties = {
-    flex: 1,
-    fontSize: "var(--font-size-md)",
-    color: "var(--text-primary)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    fontFamily: "var(--font-mono)"
-  }
-
-  const descStyle: CSSProperties = {
-    fontSize: "var(--font-size-xs)",
-    color: "var(--text-secondary)",
-    fontFamily: "var(--font-mono)",
-    flexShrink: 0
-  }
-
-  const detailsStyle: CSSProperties = {
-    padding: "0 var(--space-4) var(--space-3)",
-    paddingLeft: 38,
-    display: "flex",
-    flexDirection: "column",
-    gap: "var(--space-1)"
-  }
-
-  const kvRowStyle: CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    fontSize: "var(--font-size-xs)",
-    padding: "2px 0",
-    gap: "var(--space-2)"
-  }
-
-  const kvKeyStyle: CSSProperties = {
-    color: "var(--text-secondary)"
-  }
-
-  const kvValueStyle: CSSProperties = {
-    color: "var(--text-primary)",
-    fontFamily: "var(--font-mono)",
-    textAlign: "right"
-  }
-
   const hasTags = metric.tags.length > 0
   const hasDetails = metric.details.length > 0
 
   return (
-    <div style={cardStyle}>
-      <div style={headerStyle} onClick={() => setExpanded(!expanded)}>
-        <span style={chevronStyle}>
+    <div className="border-b border-border-muted">
+      <div
+        className="flex items-center gap-2 py-3 px-4 cursor-pointer select-none transition-[background] duration-(--transition-fast) hover:bg-subtle-hover"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span
+          className={clsx(
+            "size-3.5 text-tertiary shrink-0",
+            "transition-transform duration-(--transition-fast)",
+            expanded && "rotate-90"
+          )}
+        >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
             <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </span>
-        <span style={nameStyle}>{metric.name}</span>
+        <span className="flex-1 text-md text-primary truncate font-mono">{metric.name}</span>
         <Badge variant={metric.kind}>{metric.kind}</Badge>
-        <span style={descStyle}>{metric.description}</span>
+        <span className="text-xs text-secondary font-mono shrink-0">{metric.description}</span>
       </div>
       {expanded && (hasTags || hasDetails) && (
-        <div style={detailsStyle}>
+        <div className="flex flex-col gap-1 px-4 pb-3" style={{ paddingLeft: 38 }}>
           {hasTags && (
-            <div style={{ marginBottom: "var(--space-1)" }}>
-              <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Tags
-              </div>
+            <div className="mb-1">
+              <div className="text-xs text-tertiary mb-1 uppercase tracking-[0.05em]">Tags</div>
               {metric.tags.map((tag) => (
-                <div key={tag.key} style={kvRowStyle}>
-                  <span style={kvKeyStyle}>{tag.key}</span>
-                  <span style={kvValueStyle}>{tag.value}</span>
+                <div key={tag.key} className="flex justify-between items-center text-xs py-0.5 gap-2">
+                  <span className="text-secondary">{tag.key}</span>
+                  <span className="text-primary font-mono text-right">{tag.value}</span>
                 </div>
               ))}
             </div>
           )}
           {hasDetails && (
             <div>
-              <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Details
-              </div>
+              <div className="text-xs text-tertiary mb-1 uppercase tracking-[0.05em]">Details</div>
               {metric.details.map((detail) => (
-                <div key={detail.key} style={kvRowStyle}>
-                  <span style={kvKeyStyle}>{detail.key}</span>
-                  <span style={kvValueStyle}>{detail.value}</span>
+                <div key={detail.key} className="flex justify-between items-center text-xs py-0.5 gap-2">
+                  <span className="text-secondary">{detail.key}</span>
+                  <span className="text-primary font-mono text-right">{detail.value}</span>
                 </div>
               ))}
             </div>
@@ -153,13 +79,13 @@ export function MetricsView() {
   }, [])
 
   return (
-    <div style={containerStyle}>
+    <div className="flex flex-col h-full overflow-hidden">
       <PanelHeader title="Metrics" count={metrics.length}>
         <IconButton title="Reset metrics" onClick={handleReset}>
           <ResetIcon />
         </IconButton>
       </PanelHeader>
-      <div style={scrollArea}>
+      <div className="flex-1 overflow-auto py-2">
         {metrics.length === 0 ? (
           <EmptyState
             title="No metrics"

@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useCallback, useRef, useState } from "react"
+import { type ReactNode, useCallback, useRef, useState } from "react"
 
 interface SplitPaneProps {
   left: ReactNode
@@ -6,29 +6,6 @@ interface SplitPaneProps {
   initialRightWidth?: number
   minRightWidth?: number
   maxRightWidth?: number
-}
-
-const containerStyle: CSSProperties = {
-  display: "flex",
-  height: "100%",
-  overflow: "hidden"
-}
-
-const dividerStyle: CSSProperties = {
-  width: 1,
-  flexShrink: 0,
-  background: "var(--border-default)",
-  cursor: "col-resize",
-  position: "relative"
-}
-
-const dividerHitArea: CSSProperties = {
-  position: "absolute",
-  top: 0,
-  bottom: 0,
-  left: -3,
-  right: -3,
-  zIndex: 10
 }
 
 export function SplitPane({
@@ -71,12 +48,12 @@ export function SplitPane({
   }, [rightWidth, minRightWidth, maxRightWidth])
 
   return (
-    <div ref={containerRef} style={containerStyle}>
-      <div style={{ flex: 1, overflow: "hidden" }}>{left}</div>
-      <div style={dividerStyle} onMouseDown={handleMouseDown}>
-        <div style={dividerHitArea} />
+    <div ref={containerRef} className="flex h-full overflow-hidden">
+      <div className="flex-1 overflow-hidden">{left}</div>
+      <div className="w-px shrink-0 bg-border cursor-col-resize relative" onMouseDown={handleMouseDown}>
+        <div className="absolute inset-y-0 -left-0.75 -right-0.75 z-10" />
       </div>
-      <div style={{ width: rightWidth, flexShrink: 0, overflow: "hidden" }}>{right}</div>
+      <div className="shrink-0 overflow-hidden" style={{ width: rightWidth }}>{right}</div>
     </div>
   )
 }

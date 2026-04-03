@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react"
+import type { ReactNode } from "react"
 import type { AppView } from "./types"
 import { NavigationRail } from "./NavigationRail"
 import { TopBar } from "./TopBar"
@@ -9,33 +9,13 @@ interface AppShellProps {
   children: ReactNode
 }
 
-const shellStyle: CSSProperties = {
-  display: "flex",
-  height: "100%",
-  width: "100%",
-  overflow: "hidden"
-}
-
-const mainStyle: CSSProperties = {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  overflow: "hidden",
-  minWidth: 0
-}
-
-const contentStyle: CSSProperties = {
-  flex: 1,
-  overflow: "hidden"
-}
-
 export function AppShell({ activeView, onSelectView, children }: AppShellProps) {
   return (
-    <div style={shellStyle}>
+    <div className="flex h-full w-full overflow-hidden">
       <NavigationRail activeView={activeView} onSelectView={onSelectView} />
-      <div style={mainStyle}>
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <TopBar />
-        <div style={contentStyle}>{children}</div>
+        <div className="flex-1 overflow-hidden">{children}</div>
       </div>
     </div>
   )

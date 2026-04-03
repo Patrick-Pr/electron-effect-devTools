@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { useBackendSnapshot } from "../../lib/backend/BackendProvider"
 import { PanelHeader } from "../../components/panel/PanelHeader"
 import { IconButton } from "../../components/common/IconButton"
@@ -11,13 +11,6 @@ import type { ViewState } from "./trace-viewer-types"
 import { defaultOptions } from "./trace-viewer-types"
 import { fullTimeRange } from "./trace-viewer-utils"
 import type { TraceEventRecord } from "../../lib/contracts/tracer"
-
-const containerStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  height: "100%",
-  overflow: "hidden"
-}
 
 const ResetIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -63,7 +56,7 @@ export function TracerTimelineView() {
 
   if (events.length === 0) {
     return (
-      <div style={containerStyle}>
+      <div className="flex flex-col h-full overflow-hidden">
         <PanelHeader title="Timeline">
           <IconButton title="Reset timeline" onClick={handleReset}>
             <ResetIcon />
@@ -78,17 +71,13 @@ export function TracerTimelineView() {
   }
 
   return (
-    <div style={containerStyle}>
+    <div className="flex flex-col h-full overflow-hidden">
       <PanelHeader title="Timeline" count={events.length}>
         <IconButton title="Reset timeline" onClick={handleReset}>
           <ResetIcon />
         </IconButton>
       </PanelHeader>
-      <div style={{
-        height: defaultOptions.minimapHeight,
-        borderBottom: "1px solid var(--border-default)",
-        flexShrink: 0
-      }}>
+      <div className="border-b border-border shrink-0" style={{ height: defaultOptions.minimapHeight }}>
         <TraceMinimap
           traces={events}
           viewState={viewState}
@@ -96,7 +85,7 @@ export function TracerTimelineView() {
           options={defaultOptions}
         />
       </div>
-      <div style={{ flex: 1, overflow: "hidden" }}>
+      <div className="flex-1 overflow-hidden">
         <SplitPane
           left={
             <TraceViewer
