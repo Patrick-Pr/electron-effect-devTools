@@ -178,7 +178,7 @@ export class DevtoolsBackend {
         Effect.sync(() => {
           this.serverFiber = null
           this.runningState.running = false
-          this.runningState.error = Cause.pretty(cause)
+          this.runningState.error = formatServerStartError(cause, this.runningState.port)
           this.runningState.message = `Error starting server on port ${this.runningState.port}`
           this.stopClientSweep()
           this.refreshMetricsPolling()
@@ -774,6 +774,24 @@ function formatRelativeTime(timestamp: number): string {
 
   const hours = Math.round(minutes / 60)
   return `${hours}h ago`
+}
+
+function formatServerStartError(cause: Cause.Cause<unknown>, port: number): string {
+  const detail = Cause.pretty(cause)
+  if (detail.includes("EADDRINUSE")) {
+    return `Could not start the server because port ${port} is already in use. Stop the other DevTools server or change this app's port, then try again.`
+  }
+
+  return `Could not start the server on port ${port}. ${summarizeCause(detail)}`
+}
+
+function summarizeCause(detail: string): string {
+  return detail
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && line !== "Error")
+    .find((line) => !line.startsWith("at "))
+    ?? "Check the app logs for more details."
 }
 
 const TRACE_COLORS = ["#2f81f7", "#238636", "#db6d28", "#d29922", "#f85149"]

@@ -61,6 +61,7 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
+  position: relative;
 }
 
 .top-bar {
@@ -95,6 +96,52 @@
   padding: 0 28px 28px;
   min-width: 0;
   min-height: 0;
+}
+
+.status-notification {
+  position: absolute;
+  top: 24px;
+  right: 28px;
+  z-index: 10;
+  width: min(460px, calc(100% - 56px));
+  padding: 14px 16px;
+  border: 1px solid rgba(248, 81, 73, 0.35);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(76, 24, 28, 0.96), rgba(40, 14, 18, 0.98));
+  box-shadow: var(--shadow);
+}
+
+.status-notification__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.status-notification__header strong {
+  color: #ffd7d5;
+  font-size: 14px;
+}
+
+.status-notification p {
+  margin: 0;
+  color: #ffb4ae;
+  line-height: 1.5;
+}
+
+.status-notification__dismiss {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #ffb4ae;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.status-notification__dismiss:hover {
+  color: #ffe2df;
 }
 
 .panel {
@@ -476,6 +523,12 @@
   .panel-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .status-notification {
+    left: 28px;
+    right: 28px;
+    width: auto;
   }
 
   .workspace-split {
