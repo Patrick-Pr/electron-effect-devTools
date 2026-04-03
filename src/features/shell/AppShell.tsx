@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react"
-import { StatusNotification } from "../../components/common/StatusNotification"
-import { useBackendSnapshot } from "../../lib/backend/BackendProvider"
+import type { CSSProperties, ReactNode } from "react"
 import type { AppView } from "./types"
 import { NavigationRail } from "./NavigationRail"
 import { TopBar } from "./TopBar"
@@ -8,37 +6,36 @@ import { TopBar } from "./TopBar"
 interface AppShellProps {
   activeView: AppView
   onSelectView: (view: AppView) => void
-  children: React.ReactNode
+  children: ReactNode
+}
+
+const shellStyle: CSSProperties = {
+  display: "flex",
+  height: "100%",
+  width: "100%",
+  overflow: "hidden"
+}
+
+const mainStyle: CSSProperties = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+  minWidth: 0
+}
+
+const contentStyle: CSSProperties = {
+  flex: 1,
+  overflow: "hidden"
 }
 
 export function AppShell({ activeView, onSelectView, children }: AppShellProps) {
-  const { clients: { runningState } } = useBackendSnapshot()
-  const [dismissedError, setDismissedError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!runningState.error) {
-      setDismissedError(null)
-    }
-  }, [runningState.error])
-
-  const currentError = !runningState.running ? runningState.error : undefined
-  const visibleError = currentError !== undefined && currentError !== dismissedError
-
   return (
-    <div className="app-shell">
-      <NavigationRail activeView={activeView} onSelect={onSelectView} />
-      <div className="app-frame">
+    <div style={shellStyle}>
+      <NavigationRail activeView={activeView} onSelectView={onSelectView} />
+      <div style={mainStyle}>
         <TopBar />
-        <main className="app-content">{children}</main>
-        {visibleError
-          ? (
-            <StatusNotification
-              title="Server failed to start"
-              body={currentError}
-              onDismiss={() => setDismissedError(currentError)}
-            />
-          )
-          : null}
+        <div style={contentStyle}>{children}</div>
       </div>
     </div>
   )

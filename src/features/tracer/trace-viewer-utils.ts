@@ -1,58 +1,47 @@
 import type { TraceEventRecord } from "../../lib/contracts/tracer"
+import type { TraceViewerOptions, ViewState } from "./trace-viewer-types"
+import { defaultOptions } from "./trace-viewer-types"
 
-interface TraceTimeBounds {
-  startTime: number
-  endTime: number
-}
-
-export function getTraceTimeBounds(traces: TraceEventRecord[]): TraceTimeBounds {
-  if (traces.length === 0) {
-    return { startTime: 0, endTime: 1 }
-  }
-
-  let startTime = traces[0].startTime
-  let endTime = traces[0].endTime
-
-  traces.forEach((trace) => {
-    startTime = Math.min(startTime, trace.startTime)
-    endTime = Math.max(endTime, trace.endTime)
+export function getVisibleTraces(
+  traces: TraceEventRecord[],
+  viewState: ViewState,
+  canvasHeight: number,
+  opts: TraceViewerOptions = defaultOptions
+): TraceEventRecord[] {
+  return traces.filter((t) => {
+    const visibleH = t.endTime >= viewState.startMs && t.startTime <= viewState.endMs
+    const y = opts.timelineHeight + t.depth * (opts.barHeight + opts.barPadding) + viewState.offsetY
+    const visibleV = y + opts.barHeight >= 0 && y <= canvasHeight
+    return visibleH && visibleV
   })
-
-  if (endTime <= startTime) {
-    endTime = startTime + 1
-  }
-
-  return { startTime, endTime }
 }
 
-export function clampViewTimeRange(
-  startTime: number,
-  endTime: number,
-  bounds: TraceTimeBounds,
-  minDuration = 1
-) {
-  const totalDuration = Math.max(bounds.endTime - bounds.startTime, minDuration)
-  const duration = Math.max(minDuration, endTime - startTime)
+export function traceY(depth: number, offsetY: number, opts: TraceViewerOptions = defaultOptions): number {
+  return opts.timelineHeight + depth * (opts.barHeight + opts.barPadding) + offsetY
+}
 
-  if (duration >= totalDuration) {
-    return {
-      startTime: bounds.startTime,
-      endTime: bounds.startTime + totalDuration
-    }
+export function formatMs(ms: number): string {
+  if (ms >= 1000) {
+    return `${(Math.round((ms / 1000) * 10) / 10).toLocaleString()}s`
   }
+  return `${Math.round(ms)}ms`
+}
 
-  let nextStart = startTime
-  let nextEnd = nextStart + duration
-
-  if (nextStart < bounds.startTime) {
-    nextStart = bounds.startTime
-    nextEnd = nextStart + duration
+export function fullTimeRange(traces: TraceEventRecord[]): { start: number; end: number } | null {
+  if (traces.length === 0) return null
+  let start = traces[0].startTime
+  let end = traces[0].endTime
+  for (const t of traces) {
+    if (t.startTime < start) start = t.startTime
+    if (t.endTime > end) end = t.endTime
   }
+  return { start, end }
+}
 
-  if (nextEnd > bounds.endTime) {
-    nextEnd = bounds.endTime
-    nextStart = nextEnd - duration
+export function maxDepth(traces: TraceEventRecord[]): number {
+  let max = 0
+  for (const t of traces) {
+    if (t.depth > max) max = t.depth
   }
-
-  return { startTime: nextStart, endTime: nextEnd }
+  return max
 }

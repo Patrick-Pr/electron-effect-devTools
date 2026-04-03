@@ -1,18 +1,11 @@
-export interface TreeAction {
-  id: string
-  label: string
-  icon: string
-  onSelect?: () => void
-}
+import type { ReactNode } from "react"
 
-export interface TreeNodeData {
+export interface TreeNode {
   id: string
   label: string
-  description?: string
-  monoDescription?: boolean
-  icon?: string
-  dimmed?: boolean
-  defaultExpanded?: boolean
-  children?: TreeNodeData[]
-  actions?: TreeAction[]
+  detail?: string
+  icon?: ReactNode
+  badge?: ReactNode
+  children?: TreeNode[]
+  onClick?: () => void
 }

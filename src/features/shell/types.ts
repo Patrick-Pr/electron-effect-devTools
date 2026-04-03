@@ -1,1 +1,1 @@
-export type AppView = "clients" | "tracer" | "timeline" | "metrics" | "debug"
+export type AppView = "clients" | "tracer" | "timeline" | "metrics"

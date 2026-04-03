@@ -1,69 +1,123 @@
-import { useEffect, useMemo, useState } from "react"
-import { EmptyState } from "../../components/common/EmptyState"
-import { Panel } from "../../components/panel/Panel"
-import { PanelHeader } from "../../components/panel/PanelHeader"
-import { SplitPane } from "../../components/layout/SplitPane"
+import { type CSSProperties, useCallback, useMemo, useState } from "react"
 import { useBackendSnapshot } from "../../lib/backend/BackendProvider"
-import type { TraceEventRecord, TraceSpanRecord } from "../../lib/contracts/tracer"
-import { invokePreviewAction } from "../../mocks/actions"
+import { PanelHeader } from "../../components/panel/PanelHeader"
+import { IconButton } from "../../components/common/IconButton"
+import { EmptyState } from "../../components/common/EmptyState"
+import { SplitPane } from "../../components/layout/SplitPane"
+import TraceViewer from "./TraceViewer"
+import TraceMinimap from "./TraceMinimap"
 import { TraceInfoPanel } from "./TraceInfoPanel"
-import { TraceMinimap } from "./TraceMinimap"
-import { TraceViewer } from "./TraceViewer"
 import type { ViewState } from "./trace-viewer-types"
-import { getTraceTimeBounds } from "./trace-viewer-utils"
+import { defaultOptions } from "./trace-viewer-types"
+import { fullTimeRange } from "./trace-viewer-utils"
+import type { TraceEventRecord } from "../../lib/contracts/tracer"
 
-function flatten(spans: TraceSpanRecord[]): TraceSpanRecord[] {
-  return spans.flatMap((span) => [span, ...(span.children ? flatten(span.children) : [])])
+const containerStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  height: "100%",
+  overflow: "hidden"
 }
 
+const ResetIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 8a6 6 0 1111.5-2.5" />
+    <path d="M2 3v5h5" />
+  </svg>
+)
+
 export function TracerTimelineView() {
-  const { tracer } = useBackendSnapshot()
-  const allSpans = useMemo(() => flatten(tracer.spans), [tracer.spans])
-  const timeBounds = useMemo(() => getTraceTimeBounds(tracer.events), [tracer.events])
-  const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
-  const [viewState, setViewState] = useState<ViewState>({ startTime: 0, endTime: 1, offsetY: 0 })
+  const { tracer: { events, spans } } = useBackendSnapshot()
 
-  useEffect(() => {
-    setSelectedId((current) => current && tracer.events.some((trace) => trace.id === current) ? current : tracer.events[0]?.id)
-  }, [tracer.events])
+  const range = useMemo(() => fullTimeRange(events), [events])
 
-  useEffect(() => {
-    setViewState({
-      startTime: timeBounds.startTime,
-      endTime: timeBounds.endTime,
-      offsetY: 0
-    })
-  }, [timeBounds.endTime, timeBounds.startTime])
+  const [viewState, setViewState] = useState<ViewState>(() => {
+    if (range) {
+      const padding = Math.max((range.end - range.start) * 0.1, 50)
+      return {
+        startMs: range.start - padding,
+        endMs: range.end + padding,
+        offsetY: 0
+      }
+    }
+    return { startMs: 0, endMs: 2000, offsetY: 0 }
+  })
 
-  const selectedTrace = useMemo(() => allSpans.find((span) => span.id === selectedId), [allSpans, selectedId])
+  const [selectedEvent, setSelectedEvent] = useState<TraceEventRecord | null>(null)
+
+  const handleViewStateChange = useCallback((vs: ViewState) => {
+    const maxRange = 3600_000
+    if (vs.endMs - vs.startMs < maxRange) {
+      setViewState(vs)
+    }
+  }, [])
+
+  const handleTraceClick = useCallback((trace: TraceEventRecord) => {
+    setSelectedEvent(trace)
+  }, [])
+
+  const handleReset = useCallback(() => {
+    window.electronAPI.dispatch({ type: "timeline:reset" })
+    setSelectedEvent(null)
+  }, [])
+
+  if (events.length === 0) {
+    return (
+      <div style={containerStyle}>
+        <PanelHeader title="Timeline">
+          <IconButton title="Reset timeline" onClick={handleReset}>
+            <ResetIcon />
+          </IconButton>
+        </PanelHeader>
+        <EmptyState
+          title="No trace events"
+          description="Timeline events will appear here when spans with timing data are reported"
+        />
+      </div>
+    )
+  }
 
   return (
-    <Panel>
-      <PanelHeader
-        title="Tracer Timeline"
-        subtitle="A live Electron version of the extension tracer timeline driven by the backend trace stream."
-        actions={<button className="secondary-button" onClick={() => invokePreviewAction({ type: "timeline:reset" })}>Reset timeline</button>}
-      />
-      {tracer.events.length > 0 ? <SplitPane
-        sidebar={
-          <div className="timeline-sidebar">
-            <h3>Visible spans</h3>
-            {tracer.events.map((trace) => (
-              <button key={trace.id} className={`timeline-list-row${selectedId === trace.id ? " is-active" : ""}`} onClick={() => setSelectedId(trace.id)}>
-                <span className="timeline-swatch" style={{ background: trace.color }} />
-                <span>{trace.name}</span>
-              </button>
-            ))}
-          </div>
-        }
-        main={
-          <div className="timeline-workspace">
-            <TraceMinimap traces={tracer.events} viewState={viewState} onViewStateChange={setViewState} options={{ minimapHeight: 92 }} />
-            <TraceViewer traces={tracer.events as TraceEventRecord[]} viewState={viewState} onViewStateChange={setViewState} options={{ barHeight: 30, barPadding: 4, timelineHeight: 24 }} onTraceClick={(trace) => setSelectedId(trace.id)} />
-          </div>
-        }
-        details={<TraceInfoPanel trace={selectedTrace} />}
-      /> : <EmptyState title="No timeline data" body="Timeline events appear after the active client emits traced spans." />}
-    </Panel>
+    <div style={containerStyle}>
+      <PanelHeader title="Timeline" count={events.length}>
+        <IconButton title="Reset timeline" onClick={handleReset}>
+          <ResetIcon />
+        </IconButton>
+      </PanelHeader>
+      <div style={{
+        height: defaultOptions.minimapHeight,
+        borderBottom: "1px solid var(--border-default)",
+        flexShrink: 0
+      }}>
+        <TraceMinimap
+          traces={events}
+          viewState={viewState}
+          onViewStateChange={handleViewStateChange}
+          options={defaultOptions}
+        />
+      </div>
+      <div style={{ flex: 1, overflow: "hidden" }}>
+        <SplitPane
+          left={
+            <TraceViewer
+              traces={events}
+              viewState={viewState}
+              onViewStateChange={handleViewStateChange}
+              options={defaultOptions}
+              onTraceClick={handleTraceClick}
+            />
+          }
+          right={
+            <TraceInfoPanel
+              selectedEvent={selectedEvent}
+              spans={spans}
+            />
+          }
+          initialRightWidth={280}
+          minRightWidth={200}
+          maxRightWidth={450}
+        />
+      </div>
+    </div>
   )
 }
