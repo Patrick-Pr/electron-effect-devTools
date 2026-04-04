@@ -68,7 +68,7 @@ export class DevtoolsBackend {
   }
 
   getSnapshot(): BackendSnapshot {
-    const activeClient = this.getActiveClient()
+    const selectedClient = this.getSelectedClient()
 
     return {
       appName: APP_NAME,
@@ -80,9 +80,9 @@ export class DevtoolsBackend {
           .map((client) => this.toClientRecord(client))
       },
       metrics: {
-        metrics: activeClient?.metrics ?? []
+        metrics: selectedClient?.metrics ?? []
       },
-      tracer: this.createTracerSnapshot(activeClient)
+      tracer: this.createTracerSnapshot(selectedClient)
     }
   }
 
@@ -116,19 +116,21 @@ export class DevtoolsBackend {
         return
       }
       case "metrics:reset": {
-        const activeClient = this.getActiveClient()
-        if (activeClient) {
-          activeClient.metrics = []
+        const selectedClient = this.getSelectedClient()
+        if (selectedClient) {
+          selectedClient.metrics = []
           this.emit()
-          await this.requestMetrics(activeClient)
+          if (this.isClientConnected(selectedClient)) {
+            await this.requestMetrics(selectedClient)
+          }
         }
         return
       }
       case "tracer:reset":
       case "timeline:reset": {
-        const activeClient = this.getActiveClient()
-        if (activeClient) {
-          activeClient.spans.clear()
+        const selectedClient = this.getSelectedClient()
+        if (selectedClient) {
+          selectedClient.spans.clear()
           this.emit()
         }
         return
@@ -301,12 +303,17 @@ export class DevtoolsBackend {
     }
   }
 
-  private getActiveClient(): ClientState | undefined {
+  private getSelectedClient(): ClientState | undefined {
     if (this.activeClientId === null) {
       return undefined
     }
 
-    const client = this.clients.get(this.activeClientId)
+    return this.clients.get(this.activeClientId)
+  }
+
+  /** Selected client that is connected and not stale (for live requests such as metrics polling). */
+  private getActiveClient(): ClientState | undefined {
+    const client = this.getSelectedClient()
     return client && this.isClientConnected(client) ? client : undefined
   }
 
@@ -344,12 +351,22 @@ export class DevtoolsBackend {
   }
 
   private ensureActiveClientSelection(): void {
-    const activeClient = this.activeClientId === null ? undefined : this.clients.get(this.activeClientId)
-    if (activeClient && this.isClientConnected(activeClient)) {
+    const selected = this.activeClientId === null ? undefined : this.clients.get(this.activeClientId)
+    if (selected && this.isClientConnected(selected)) {
       return
     }
 
-    this.activeClientId = this.getFirstConnectedClient()?.id ?? null
+    const firstConnected = this.getFirstConnectedClient()
+    if (firstConnected) {
+      this.activeClientId = firstConnected.id
+      return
+    }
+
+    if (selected) {
+      return
+    }
+
+    this.activeClientId = null
   }
 
   private getFirstConnectedClient(): ClientState | undefined {
@@ -419,7 +436,7 @@ export class DevtoolsBackend {
       id: client.id,
       name: client.name,
       transport: "websocket",
-      active: client.id === this.activeClientId && this.isClientConnected(client),
+      active: client.id === this.activeClientId,
       status: this.isClientConnected(client) ? "connected" : "disconnected",
       lastSeen: formatRelativeTime(client.lastSeenAt)
     }
