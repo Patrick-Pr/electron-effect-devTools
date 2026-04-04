@@ -7,10 +7,11 @@ import { Badge } from "../../components/common/Badge"
 import { EmptyState } from "../../components/common/EmptyState"
 import type { MetricRecord } from "../../lib/contracts/metrics"
 
-const ResetIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M2 8a6 6 0 1111.5-2.5" />
-    <path d="M2 3v5h5" />
+const ClearMetricsIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 6h18" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
   </svg>
 )
 
@@ -82,7 +83,7 @@ export function MetricsView() {
     <div className="flex flex-col h-full overflow-hidden">
       <PanelHeader title="Metrics" count={metrics.length}>
         <IconButton title="Reset metrics" onClick={handleReset}>
-          <ResetIcon />
+          <ClearMetricsIcon />
         </IconButton>
       </PanelHeader>
       <div className="flex-1 overflow-auto py-2">

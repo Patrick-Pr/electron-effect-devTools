@@ -7,10 +7,11 @@ import { Badge } from "../../components/common/Badge"
 import { EmptyState } from "../../components/common/EmptyState"
 import type { TraceSpanRecord, SpanEventRecord } from "../../lib/contracts/tracer"
 
-const ResetIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M2 8a6 6 0 1111.5-2.5" />
-    <path d="M2 3v5h5" />
+const ClearTracesIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 6h18" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
   </svg>
 )
 
@@ -21,7 +22,7 @@ const LocationIcon = () => (
 )
 
 function SpanNode({ span, depth }: { span: TraceSpanRecord; depth: number }) {
-  const [expanded, setExpanded] = useState(depth === 0)
+  const [expanded, setExpanded] = useState(false)
 
   const hasContent = (span.children && span.children.length > 0) ||
     span.attributes.length > 0 ||
@@ -160,7 +161,7 @@ export function TracerTreeView() {
     <div className="flex flex-col h-full overflow-hidden">
       <PanelHeader title="Tracer" count={spans.length}>
         <IconButton title="Reset tracer" onClick={handleReset}>
-          <ResetIcon />
+          <ClearTracesIcon />
         </IconButton>
       </PanelHeader>
       <div className="flex-1 overflow-auto">
