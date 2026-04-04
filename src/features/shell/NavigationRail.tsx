@@ -77,7 +77,7 @@ function NavItem({ view, label, icon, active, onSelect }: {
         )}
       />
       {icon}
-      <span className="text-[12px] leading-none tracking-[0.02em]">{label}</span>
+      <span className="text-sm leading-none tracking-[0.02em]">{label}</span>
     </button>
   )
 }
