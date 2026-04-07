@@ -62,6 +62,10 @@ app.whenReady().then(() => {
   })
 })
 
+app.on("before-quit", () => {
+  void backend.dispose()
+})
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit()

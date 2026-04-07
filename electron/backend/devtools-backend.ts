@@ -5,7 +5,10 @@ import * as SocketServer from "@effect/platform/SocketServer"
 import * as Cause from "effect/Cause"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Fiber from "effect/Fiber"
+import * as FiberHandle from "effect/FiberHandle"
+import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as Stream from "effect/Stream"
+import * as SubscriptionRef from "effect/SubscriptionRef"
 import path from "node:path"
 import { shell } from "electron"
 import type { BackendCommand, BackendSnapshot } from "../../src/lib/contracts/backend.js"
@@ -38,6 +41,13 @@ interface ClientState {
   spans: Map<string, InternalSpanRecord>
 }
 
+interface BackendState {
+  nextClientId: number
+  activeClientId: number | null
+  runningState: RunningState
+  clients: Map<number, ClientState>
+}
+
 const APP_NAME = "Effect DevTools"
 const APP_VERSION = "1.0.0"
 const DEFAULT_PORT = 34437
@@ -45,94 +55,380 @@ const METRICS_POLL_INTERVAL = 500
 const CLIENT_SWEEP_INTERVAL = 1000
 const STALE_CLIENT_TIMEOUT = 10_000
 
+class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("DevtoolsBackendService", {
+  scoped: Effect.gen(function*() {
+    const stateRef = yield* SubscriptionRef.make(makeInitialBackendState())
+    const serverHandle = yield* FiberHandle.make<void, never>()
+    const metricsHandle = yield* FiberHandle.make<void, never>()
+    const sweepHandle = yield* FiberHandle.make<void, never>()
+
+    const updateState = (update: (state: BackendState) => BackendState) => SubscriptionRef.update(stateRef, update)
+
+    function refreshMetricsPolling(): Effect.Effect<void> {
+      return Effect.gen(function*() {
+        const state = yield* SubscriptionRef.get(stateRef)
+        const activeClient = getActiveClient(state)
+
+        if (!state.runningState.running || !activeClient) {
+          yield* FiberHandle.clear(metricsHandle)
+          return
+        }
+
+        const loop = Effect.gen(function*() {
+          while (true) {
+            const currentState = yield* SubscriptionRef.get(stateRef)
+            const currentClient = getActiveClient(currentState)
+
+            if (!currentState.runningState.running || !currentClient || currentClient.id !== activeClient.id) {
+              return
+            }
+
+            yield* requestMetrics(currentClient.id)
+            yield* Effect.sleep(METRICS_POLL_INTERVAL)
+          }
+        })
+
+        yield* FiberHandle.run(metricsHandle, loop).pipe(Effect.asVoid)
+      })
+    }
+
+    function refreshClientSweep(): Effect.Effect<void> {
+      return Effect.gen(function*() {
+        const state = yield* SubscriptionRef.get(stateRef)
+        if (!state.runningState.running) {
+          yield* FiberHandle.clear(sweepHandle)
+          return
+        }
+
+        const loop = Effect.gen(function*() {
+          while (true) {
+            const currentState = yield* SubscriptionRef.get(stateRef)
+            if (!currentState.runningState.running) {
+              return
+            }
+
+            yield* sweepStaleClients()
+            yield* Effect.sleep(CLIENT_SWEEP_INTERVAL)
+          }
+        })
+
+        yield* FiberHandle.run(sweepHandle, loop).pipe(Effect.asVoid)
+      })
+    }
+
+    function reconcileBackgroundFibers(): Effect.Effect<void> {
+      return Effect.gen(function*() {
+        yield* refreshMetricsPolling()
+        yield* refreshClientSweep()
+      })
+    }
+
+    function requestMetrics(clientId: number): Effect.Effect<void> {
+      return Effect.gen(function*() {
+        const state = yield* SubscriptionRef.get(stateRef)
+        const client = state.clients.get(clientId)
+
+        if (!client || !isClientConnected(client)) {
+          return
+        }
+
+        yield* client.request({ _tag: "MetricsRequest" }).pipe(
+          Effect.catchAllCause((cause) =>
+            Cause.isInterruptedOnly(cause)
+              ? Effect.void
+              : Effect.gen(function*() {
+                  yield* Effect.logError(Cause.pretty(cause))
+                  const changed = yield* SubscriptionRef.modify(stateRef, (currentState) => markClientDisconnected(currentState, clientId))
+                  if (changed) {
+                    yield* reconcileBackgroundFibers()
+                  }
+                }))
+        )
+      })
+    }
+
+    function sweepStaleClients(): Effect.Effect<void> {
+      return Effect.gen(function*() {
+        const changed = yield* SubscriptionRef.modify(stateRef, sweepDisconnectedClients)
+        if (changed) {
+          yield* refreshMetricsPolling()
+        }
+      })
+    }
+
+    function ingestClientMessage(clientId: number, message: Domain.Request.WithoutPing): Effect.Effect<void> {
+      return Effect.gen(function*() {
+        const shouldRefreshMetrics = yield* SubscriptionRef.modify(stateRef, (state) => {
+          const client = state.clients.get(clientId)
+          if (!client) {
+            return [false, state] as const
+          }
+
+          const selectedBefore = getActiveClient(state)?.id ?? null
+          const wasConnected = isClientConnected(client)
+          const nextState = applyClientMessage(state, clientId, message)
+          const selectedAfter = getActiveClient(nextState)?.id ?? null
+
+          return [selectedBefore !== selectedAfter || !wasConnected, nextState] as const
+        })
+
+        if (shouldRefreshMetrics) {
+          yield* refreshMetricsPolling()
+        }
+      })
+    }
+
+    function addClient(client: Server.Client, disconnectSignal: Deferred.Deferred<void>): Effect.Effect<number> {
+      return Effect.gen(function*() {
+        const id = yield* SubscriptionRef.modify(stateRef, (state) => {
+          const nextId = state.nextClientId
+          const now = Date.now()
+          const nextClient: ClientState = {
+            id: nextId,
+            name: `Client #${nextId}`,
+            connectedAt: now,
+            lastSeenAt: now,
+            status: "connected",
+            disconnectSignal,
+            request: client.request,
+            metrics: [],
+            spans: new Map()
+          }
+
+          const nextState = ensureActiveClientSelection({
+            ...state,
+            nextClientId: nextId + 1,
+            clients: setClient(state.clients, nextClient)
+          })
+
+          return [nextId, nextState] as const
+        })
+
+        yield* reconcileBackgroundFibers()
+        return id
+      })
+    }
+
+    function handleClient(client: Server.Client) {
+      return Effect.gen(function*() {
+        const disconnectSignal = yield* Deferred.make<void>()
+        const clientId = yield* addClient(client, disconnectSignal)
+
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function*() {
+            const changed = yield* SubscriptionRef.modify(stateRef, (state) => markClientDisconnected(state, clientId))
+            if (changed) {
+              yield* reconcileBackgroundFibers()
+            }
+          }))
+
+        yield* client.queue.take.pipe(
+          Effect.flatMap((message) => ingestClientMessage(clientId, message)),
+          Effect.forever,
+          Effect.race(Deferred.await(disconnectSignal)),
+          Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause) ? Effect.void : Effect.logError(Cause.pretty(cause)))
+        )
+      })
+    }
+
+    return {
+      changes: stateRef.changes.pipe(Stream.map(createBackendSnapshot)),
+      snapshot: SubscriptionRef.get(stateRef).pipe(Effect.map(createBackendSnapshot)),
+      startServer: Effect.gen(function*() {
+        const state = yield* SubscriptionRef.get(stateRef)
+        if (state.runningState.running || state.runningState.message.startsWith("Starting server on port ")) {
+          return
+        }
+
+        const port = state.runningState.port
+
+        yield* updateState((currentState) => ({
+          ...currentState,
+          runningState: {
+            ...currentState.runningState,
+            error: undefined,
+            message: `Starting server on port ${currentState.runningState.port}`
+          }
+        }))
+
+        const serverProgram = Server.run(handleClient).pipe(
+          Effect.provideServiceEffect(
+            SocketServer.SocketServer,
+            NodeSocketServer.makeWebSocket({ port }).pipe(
+              Effect.tap(() =>
+                updateState((currentState) => ({
+                  ...currentState,
+                  runningState: {
+                    ...currentState.runningState,
+                    running: true,
+                    error: undefined,
+                    message: `Server listening on port ${currentState.runningState.port}`
+                  }
+                })).pipe(Effect.zipRight(reconcileBackgroundFibers()))
+              )
+            )
+          ),
+          Effect.scoped,
+          Effect.catchAllCause((cause) =>
+            Cause.isInterruptedOnly(cause)
+              ? Effect.void
+              : Effect.gen(function*() {
+                  yield* Effect.logError(Cause.pretty(cause))
+                  yield* updateState((currentState) => ({
+                    ...currentState,
+                    runningState: {
+                      ...currentState.runningState,
+                      running: false,
+                      error: formatServerStartError(cause, currentState.runningState.port),
+                      message: `Error starting server on port ${currentState.runningState.port}`
+                    }
+                  }))
+                  yield* reconcileBackgroundFibers()
+                }))
+        )
+
+        yield* FiberHandle.run(serverHandle, serverProgram).pipe(Effect.asVoid)
+      }),
+      stopServer: Effect.gen(function*() {
+        yield* FiberHandle.clear(serverHandle)
+        yield* FiberHandle.clear(metricsHandle)
+        yield* FiberHandle.clear(sweepHandle)
+        yield* updateState((state) => ({
+          nextClientId: 1,
+          activeClientId: null,
+          clients: new Map(),
+          runningState: {
+            running: false,
+            port: state.runningState.port,
+            message: "Server disabled"
+          }
+        }))
+      }),
+      selectClient: (clientId: number) =>
+        updateState((state) => {
+          const client = state.clients.get(clientId)
+          return ensureActiveClientSelection({
+            ...state,
+            activeClientId: client && isClientConnected(client) ? clientId : state.activeClientId
+          })
+        }).pipe(Effect.zipRight(refreshMetricsPolling())),
+      disconnectClient: (clientId: number) =>
+        Effect.gen(function*() {
+          const disconnectSignal = yield* SubscriptionRef.modify(stateRef, (state) => {
+            const client = state.clients.get(clientId)
+            if (!client) {
+              return [undefined, state] as const
+            }
+
+            const [, nextState] = markClientDisconnected(state, clientId)
+            return [client.disconnectSignal, nextState] as const
+          })
+
+          if (disconnectSignal) {
+            yield* Deferred.succeed(disconnectSignal, void 0).pipe(
+              Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause) ? Effect.void : Effect.logWarning(Cause.pretty(cause)))
+            )
+            yield* reconcileBackgroundFibers()
+          }
+        }),
+      removeClient: (clientId: number) =>
+        updateState((state) => removeClientById(state, clientId)).pipe(Effect.zipRight(refreshMetricsPolling())),
+      resetMetrics: Effect.gen(function*() {
+        const clientId = yield* SubscriptionRef.modify(stateRef, (state) => {
+          const selectedClient = getSelectedClient(state)
+          if (!selectedClient) {
+            return [undefined, state] as const
+          }
+
+          const nextState = setClientState(state, {
+            ...selectedClient,
+            metrics: []
+          })
+
+          return [isClientConnected(selectedClient) ? selectedClient.id : undefined, nextState] as const
+        })
+
+        if (clientId !== undefined) {
+          yield* requestMetrics(clientId)
+        }
+      }),
+      resetTracer: updateState((state) => {
+        const selectedClient = getSelectedClient(state)
+        if (!selectedClient) {
+          return state
+        }
+
+        return setClientState(state, {
+          ...selectedClient,
+          spans: new Map()
+        })
+      })
+    }
+  })
+}) {}
+
 export class DevtoolsBackend {
   private readonly listeners = new Set<(snapshot: BackendSnapshot) => void>()
-  private readonly clients = new Map<number, ClientState>()
-  private serverFiber: Fiber.RuntimeFiber<void, unknown> | null = null
-  private metricsInterval: NodeJS.Timeout | null = null
-  private clientSweepInterval: NodeJS.Timeout | null = null
-  private nextClientId = 1
-  private activeClientId: number | null = null
-  private readonly runningState: RunningState = {
-    running: false,
-    port: DEFAULT_PORT,
-    message: "Server disabled"
+  private readonly runtime = ManagedRuntime.make(DevtoolsBackendService.Default)
+  private latestSnapshot = createBackendSnapshot(makeInitialBackendState())
+
+  constructor() {
+    this.runtime.runFork(
+      Stream.unwrap(
+        Effect.map(DevtoolsBackendService, (service) => service.changes)
+      ).pipe(
+        Stream.runForEach((snapshot) =>
+          Effect.sync(() => {
+            this.latestSnapshot = snapshot
+            for (const listener of this.listeners) {
+              listener(snapshot)
+            }
+          }))
+      )
+    )
   }
 
   subscribe(listener: (snapshot: BackendSnapshot) => void): () => void {
     this.listeners.add(listener)
-    listener(this.getSnapshot())
+    listener(this.latestSnapshot)
     return () => {
       this.listeners.delete(listener)
     }
   }
 
   getSnapshot(): BackendSnapshot {
-    const selectedClient = this.getSelectedClient()
-
-    return {
-      appName: APP_NAME,
-      version: APP_VERSION,
-      clients: {
-        runningState: { ...this.runningState },
-        clients: [...this.clients.values()]
-          .sort((left, right) => left.id - right.id)
-          .map((client) => this.toClientRecord(client))
-      },
-      metrics: {
-        metrics: selectedClient?.metrics ?? []
-      },
-      tracer: this.createTracerSnapshot(selectedClient)
-    }
+    return this.latestSnapshot
   }
 
   async dispatch(command: BackendCommand): Promise<void> {
     switch (command.type) {
       case "server:start": {
-        await this.startServer()
+        await this.runCommand((service) => service.startServer)
         return
       }
       case "server:stop": {
-        await this.stopServer()
+        await this.runCommand((service) => service.stopServer)
         return
       }
       case "client:select": {
-        const client = this.clients.get(command.clientId)
-        this.activeClientId = client && this.isClientConnected(client) ? command.clientId : this.activeClientId
-        this.refreshMetricsPolling()
-        this.emit()
+        await this.runCommand((service) => service.selectClient(command.clientId))
         return
       }
       case "client:disconnect": {
-        await this.disconnectClient(command.clientId)
-        this.refreshMetricsPolling()
-        this.emit()
+        await this.runCommand((service) => service.disconnectClient(command.clientId))
         return
       }
       case "client:remove": {
-        this.removeClient(command.clientId)
-        this.refreshMetricsPolling()
-        this.emit()
+        await this.runCommand((service) => service.removeClient(command.clientId))
         return
       }
       case "metrics:reset": {
-        const selectedClient = this.getSelectedClient()
-        if (selectedClient) {
-          selectedClient.metrics = []
-          this.emit()
-          if (this.isClientConnected(selectedClient)) {
-            await this.requestMetrics(selectedClient)
-          }
-        }
+        await this.runCommand((service) => service.resetMetrics)
         return
       }
       case "tracer:reset":
       case "timeline:reset": {
-        const selectedClient = this.getSelectedClient()
-        if (selectedClient) {
-          selectedClient.spans.clear()
-          this.emit()
-        }
+        await this.runCommand((service) => service.resetTracer)
         return
       }
       case "reveal-location": {
@@ -141,7 +437,16 @@ export class DevtoolsBackend {
     }
   }
 
-  async revealLocation(location: LocationRecord): Promise<void> {
+  async dispose(): Promise<void> {
+    await this.runtime.dispose()
+  }
+
+  private async runCommand(run: (service: DevtoolsBackendService) => Effect.Effect<void>): Promise<void> {
+    await this.runtime.runPromise(Effect.flatMap(DevtoolsBackendService, run))
+    this.latestSnapshot = await this.runtime.runPromise(Effect.flatMap(DevtoolsBackendService, (service) => service.snapshot))
+  }
+
+  private async revealLocation(location: LocationRecord): Promise<void> {
     const absolutePath = path.isAbsolute(location.path)
       ? location.path
       : path.resolve(process.cwd(), location.path)
@@ -151,306 +456,195 @@ export class DevtoolsBackend {
       shell.showItemInFolder(absolutePath)
     }
   }
+}
 
-  private async startServer(): Promise<void> {
-    if (this.serverFiber !== null) {
-      return
-    }
-
-    this.runningState.error = undefined
-    this.runningState.message = `Starting server on port ${this.runningState.port}`
-    this.startClientSweep()
-    this.emit()
-
-    const program = Server.run((client) => this.handleClient(client)).pipe(
-      Effect.provideServiceEffect(
-        SocketServer.SocketServer,
-        NodeSocketServer.makeWebSocket({ port: this.runningState.port }).pipe(
-          Effect.tap(() =>
-            Effect.sync(() => {
-              this.runningState.running = true
-              this.runningState.error = undefined
-              this.runningState.message = `Server listening on port ${this.runningState.port}`
-              this.emit()
-            }))
-        )
-      ),
-      Effect.scoped,
-      Effect.catchAllCause((cause) =>
-        Effect.sync(() => {
-          this.serverFiber = null
-          this.runningState.running = false
-          this.runningState.error = formatServerStartError(cause, this.runningState.port)
-          this.runningState.message = `Error starting server on port ${this.runningState.port}`
-          this.stopClientSweep()
-          this.refreshMetricsPolling()
-          this.emit()
-        }))
-    )
-
-    this.serverFiber = Effect.runFork(program)
-  }
-
-  private async stopServer(): Promise<void> {
-    const fiber = this.serverFiber
-    this.serverFiber = null
-
-    if (fiber) {
-      await Effect.runPromise(Fiber.interrupt(fiber))
-    }
-
-    this.runningState.running = false
-    this.runningState.error = undefined
-    this.runningState.message = "Server disabled"
-    this.stopClientSweep()
-    this.clients.clear()
-    this.activeClientId = null
-    this.refreshMetricsPolling()
-    this.emit()
-  }
-
-  private handleClient(client: Server.Client) {
-    return Effect.gen(this, function*() {
-      const id = this.nextClientId++
-      const now = Date.now()
-      const disconnectSignal = yield* Deferred.make<void>()
-      const state: ClientState = {
-        id,
-        name: `Client #${id}`,
-        connectedAt: now,
-        lastSeenAt: now,
-        status: "connected",
-        disconnectSignal,
-        request: client.request,
-        metrics: [],
-        spans: new Map()
-      }
-
-      this.clients.set(id, state)
-      this.ensureActiveClientSelection()
-      this.refreshMetricsPolling()
-      this.emit()
-
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          this.markClientDisconnected(state)
-          this.ensureActiveClientSelection()
-          this.refreshMetricsPolling()
-          this.emit()
-        }))
-
-      yield* client.queue.take.pipe(
-        Effect.tap((message) =>
-          Effect.sync(() => {
-            state.lastSeenAt = Date.now()
-            state.status = "connected"
-            this.handleClientMessage(state, message)
-            this.ensureActiveClientSelection()
-            this.emit()
-          })),
-        Effect.forever,
-        Effect.race(Deferred.await(disconnectSignal)),
-        Effect.catchAll(() => Effect.void)
-      )
-    })
-  }
-
-  private handleClientMessage(client: ClientState, message: Domain.Request.WithoutPing): void {
-    switch (message._tag) {
-      case "MetricsSnapshot": {
-        client.metrics = message.metrics.map(toMetricRecord)
-        return
-      }
-      case "Span": {
-        registerSpan(client.spans, message)
-        return
-      }
-      case "SpanEvent": {
-        registerSpanEvent(client.spans, message)
-      }
+function makeInitialBackendState(): BackendState {
+  return {
+    nextClientId: 1,
+    activeClientId: null,
+    clients: new Map(),
+    runningState: {
+      running: false,
+      port: DEFAULT_PORT,
+      message: "Server disabled"
     }
   }
+}
 
-  private refreshMetricsPolling(): void {
-    if (this.metricsInterval) {
-      clearInterval(this.metricsInterval)
-      this.metricsInterval = null
-    }
+function createBackendSnapshot(state: BackendState): BackendSnapshot {
+  const selectedClient = getSelectedClient(state)
 
-    const activeClient = this.getActiveClient()
-    if (!this.runningState.running || !activeClient) {
-      return
-    }
+  return {
+    appName: APP_NAME,
+    version: APP_VERSION,
+    clients: {
+      runningState: { ...state.runningState },
+      clients: [...state.clients.values()]
+        .sort((left, right) => left.id - right.id)
+        .map((client) => toClientRecord(client, state.activeClientId))
+    },
+    metrics: {
+      metrics: selectedClient?.metrics ?? []
+    },
+    tracer: createTracerSnapshot(selectedClient)
+  }
+}
 
-    void this.requestMetrics(activeClient)
-    this.metricsInterval = setInterval(() => {
-      const currentActiveClient = this.getActiveClient()
-      if (currentActiveClient) {
-        void this.requestMetrics(currentActiveClient)
-      }
-    }, METRICS_POLL_INTERVAL)
+function setClient(clients: Map<number, ClientState>, client: ClientState): Map<number, ClientState> {
+  const nextClients = new Map(clients)
+  nextClients.set(client.id, client)
+  return nextClients
+}
+
+function setClientState(state: BackendState, client: ClientState): BackendState {
+  return {
+    ...state,
+    clients: setClient(state.clients, client)
+  }
+}
+
+function removeClientById(state: BackendState, clientId: number): BackendState {
+  if (!state.clients.has(clientId)) {
+    return state
   }
 
-  private async requestMetrics(client: ClientState): Promise<void> {
-    try {
-      await Effect.runPromise(client.request({ _tag: "MetricsRequest" }))
-    } catch {
-      if (this.markClientDisconnected(client)) {
-        this.ensureActiveClientSelection()
-        this.refreshMetricsPolling()
-        this.emit()
-      }
-    }
+  const nextClients = new Map(state.clients)
+  nextClients.delete(clientId)
+
+  return ensureActiveClientSelection({
+    ...state,
+    clients: nextClients,
+    activeClientId: state.activeClientId === clientId ? null : state.activeClientId
+  })
+}
+
+function getSelectedClient(state: BackendState): ClientState | undefined {
+  return state.activeClientId === null ? undefined : state.clients.get(state.activeClientId)
+}
+
+function getActiveClient(state: BackendState): ClientState | undefined {
+  const client = getSelectedClient(state)
+  return client && isClientConnected(client) ? client : undefined
+}
+
+function ensureActiveClientSelection(state: BackendState): BackendState {
+  const selected = getSelectedClient(state)
+  if (selected && isClientConnected(selected)) {
+    return state
   }
 
-  private getSelectedClient(): ClientState | undefined {
-    if (this.activeClientId === null) {
-      return undefined
-    }
-
-    return this.clients.get(this.activeClientId)
-  }
-
-  /** Selected client that is connected and not stale (for live requests such as metrics polling). */
-  private getActiveClient(): ClientState | undefined {
-    const client = this.getSelectedClient()
-    return client && this.isClientConnected(client) ? client : undefined
-  }
-
-  private startClientSweep(): void {
-    if (this.clientSweepInterval) {
-      return
-    }
-
-    this.clientSweepInterval = setInterval(() => {
-      this.sweepStaleClients()
-    }, CLIENT_SWEEP_INTERVAL)
-  }
-
-  private stopClientSweep(): void {
-    if (this.clientSweepInterval) {
-      clearInterval(this.clientSweepInterval)
-      this.clientSweepInterval = null
-    }
-  }
-
-  private sweepStaleClients(): void {
-    let changed = false
-
-    for (const client of this.clients.values()) {
-      if (this.isClientStale(client) && this.markClientDisconnected(client)) {
-        changed = true
-      }
-    }
-
-    if (changed) {
-      this.ensureActiveClientSelection()
-      this.refreshMetricsPolling()
-      this.emit()
-    }
-  }
-
-  private ensureActiveClientSelection(): void {
-    const selected = this.activeClientId === null ? undefined : this.clients.get(this.activeClientId)
-    if (selected && this.isClientConnected(selected)) {
-      return
-    }
-
-    const firstConnected = this.getFirstConnectedClient()
-    if (firstConnected) {
-      this.activeClientId = firstConnected.id
-      return
-    }
-
-    if (selected) {
-      return
-    }
-
-    this.activeClientId = null
-  }
-
-  private getFirstConnectedClient(): ClientState | undefined {
-    return [...this.clients.values()].find((client) => this.isClientConnected(client))
-  }
-
-  private isClientConnected(client: ClientState): boolean {
-    return client.status === "connected" && !this.isClientStale(client)
-  }
-
-  private isClientStale(client: ClientState): boolean {
-    return client.status === "connected" && Date.now() - client.lastSeenAt > STALE_CLIENT_TIMEOUT
-  }
-
-  private markClientDisconnected(client: ClientState): boolean {
-    if (client.status === "disconnected") {
-      return false
-    }
-
-    client.status = "disconnected"
-    return true
-  }
-
-  private async disconnectClient(clientId: number): Promise<void> {
-    const client = this.clients.get(clientId)
-    if (!client) {
-      return
-    }
-
-    const changed = this.markClientDisconnected(client)
-    this.ensureActiveClientSelection()
-
-    await Effect.runPromise(
-      Deferred.succeed(client.disconnectSignal, void 0).pipe(
-        Effect.catchAll(() => Effect.void)
-      )
-    )
-
-    if (changed) {
-      this.refreshMetricsPolling()
-      this.emit()
-    }
-  }
-
-  private removeClient(clientId: number): void {
-    const client = this.clients.get(clientId)
-    if (!client) {
-      return
-    }
-
-    this.clients.delete(clientId)
-    if (this.activeClientId === clientId) {
-      this.activeClientId = null
-    }
-    this.ensureActiveClientSelection()
-  }
-
-  private emit(): void {
-    const snapshot = this.getSnapshot()
-    for (const listener of this.listeners) {
-      listener(snapshot)
-    }
-  }
-
-  private toClientRecord(client: ClientState): ClientRecord {
+  const firstConnected = [...state.clients.values()].find((client) => isClientConnected(client))
+  if (firstConnected) {
     return {
-      id: client.id,
-      name: client.name,
-      transport: "websocket",
-      active: client.id === this.activeClientId,
-      status: this.isClientConnected(client) ? "connected" : "disconnected",
-      lastSeen: formatRelativeTime(client.lastSeenAt)
+      ...state,
+      activeClientId: firstConnected.id
     }
   }
 
-  private createTracerSnapshot(client: ClientState | undefined): BackendSnapshot["tracer"] {
-    if (!client) {
-      return { spans: [], events: [] }
-    }
-
-    const roots = buildTraceTree(client.spans)
-    const events = buildTraceEvents(client.spans)
-    return { spans: roots, events }
+  if (selected) {
+    return state
   }
+
+  return {
+    ...state,
+    activeClientId: null
+  }
+}
+
+function isClientConnected(client: ClientState): boolean {
+  return client.status === "connected" && !isClientStale(client)
+}
+
+function isClientStale(client: ClientState): boolean {
+  return client.status === "connected" && Date.now() - client.lastSeenAt > STALE_CLIENT_TIMEOUT
+}
+
+function markClientDisconnected(state: BackendState, clientId: number): readonly [boolean, BackendState] {
+  const client = state.clients.get(clientId)
+  if (!client || client.status === "disconnected") {
+    return [false, state] as const
+  }
+
+  return [
+    true,
+    ensureActiveClientSelection(setClientState(state, {
+      ...client,
+      status: "disconnected"
+    }))
+  ] as const
+}
+
+function sweepDisconnectedClients(state: BackendState): readonly [boolean, BackendState] {
+  let nextState = state
+  let changed = false
+
+  for (const client of state.clients.values()) {
+    if (isClientStale(client)) {
+      const [didChange, updatedState] = markClientDisconnected(nextState, client.id)
+      changed = changed || didChange
+      nextState = updatedState
+    }
+  }
+
+  return [changed, nextState] as const
+}
+
+function applyClientMessage(
+  state: BackendState,
+  clientId: number,
+  message: Domain.Request.WithoutPing
+): BackendState {
+  const client = state.clients.get(clientId)
+  if (!client) {
+    return state
+  }
+
+  let spans = client.spans
+  let metrics = client.metrics
+
+  switch (message._tag) {
+    case "MetricsSnapshot": {
+      metrics = message.metrics.map(toMetricRecord)
+      break
+    }
+    case "Span": {
+      spans = registerSpan(client.spans, message)
+      break
+    }
+    case "SpanEvent": {
+      spans = registerSpanEvent(client.spans, message)
+      break
+    }
+  }
+
+  return ensureActiveClientSelection(setClientState(state, {
+    ...client,
+    lastSeenAt: Date.now(),
+    status: "connected",
+    metrics,
+    spans
+  }))
+}
+
+function toClientRecord(client: ClientState, activeClientId: number | null): ClientRecord {
+  return {
+    id: client.id,
+    name: client.name,
+    transport: "websocket",
+    active: client.id === activeClientId,
+    status: isClientConnected(client) ? "connected" : "disconnected",
+    lastSeen: formatRelativeTime(client.lastSeenAt)
+  }
+}
+
+function createTracerSnapshot(client: ClientState | undefined): BackendSnapshot["tracer"] {
+  if (!client) {
+    return { spans: [], events: [] }
+  }
+
+  const roots = buildTraceTree(client.spans)
+  const events = buildTraceEvents(client.spans)
+  return { spans: roots, events }
 }
 
 function toMetricRecord(metric: Domain.Metric): MetricRecord {
@@ -526,27 +720,34 @@ function toMetricRecord(metric: Domain.Metric): MetricRecord {
   }
 }
 
-function registerSpan(spans: Map<string, InternalSpanRecord>, span: Domain.Span): void {
-  const parentId = span.parent._tag === "Some" ? registerParentSpan(spans, span.parent.value) : undefined
-  const current = spans.get(span.spanId)
+function registerSpan(spans: Map<string, InternalSpanRecord>, span: Domain.Span): Map<string, InternalSpanRecord> {
+  const parentState = span.parent._tag === "Some" ? registerParentSpan(spans, span.parent.value) : [spans, undefined] as const
+  const nextSpans = new Map(parentState[0])
+  const current = nextSpans.get(span.spanId)
 
-  spans.set(span.spanId, {
+  nextSpans.set(span.spanId, {
     id: span.spanId,
     traceId: span.traceId,
     spanId: span.spanId,
     name: span.name,
     external: false,
-    parentId,
+    parentId: parentState[1],
     attributes: new Map(span.attributes),
     status: span.status,
     events: current?.events ?? []
   })
+
+  return nextSpans
 }
 
-function registerParentSpan(spans: Map<string, InternalSpanRecord>, span: Domain.ParentSpan): string {
+function registerParentSpan(
+  spans: Map<string, InternalSpanRecord>,
+  span: Domain.ParentSpan
+): readonly [Map<string, InternalSpanRecord>, string] {
   if (span._tag === "ExternalSpan") {
-    const current = spans.get(span.spanId)
-    spans.set(span.spanId, {
+    const nextSpans = new Map(spans)
+    const current = nextSpans.get(span.spanId)
+    nextSpans.set(span.spanId, {
       id: span.spanId,
       traceId: span.traceId,
       spanId: span.spanId,
@@ -557,17 +758,17 @@ function registerParentSpan(spans: Map<string, InternalSpanRecord>, span: Domain
       status: current?.status,
       events: current?.events ?? []
     })
-    return span.spanId
+    return [nextSpans, span.spanId] as const
   }
 
-  registerSpan(spans, span)
-  return span.spanId
+  return [registerSpan(spans, span), span.spanId] as const
 }
 
-function registerSpanEvent(spans: Map<string, InternalSpanRecord>, event: Domain.SpanEvent): void {
-  const current = spans.get(event.spanId)
+function registerSpanEvent(spans: Map<string, InternalSpanRecord>, event: Domain.SpanEvent): Map<string, InternalSpanRecord> {
+  const nextSpans = new Map(spans)
+  const current = nextSpans.get(event.spanId)
   if (!current) {
-    spans.set(event.spanId, {
+    nextSpans.set(event.spanId, {
       id: event.spanId,
       traceId: event.traceId,
       spanId: event.spanId,
@@ -577,10 +778,14 @@ function registerSpanEvent(spans: Map<string, InternalSpanRecord>, event: Domain
       attributes: new Map(),
       events: [event]
     })
-    return
+    return nextSpans
   }
 
-  current.events = [...current.events, event].sort((left, right) => bigintToNumber(left.startTime - right.startTime))
+  nextSpans.set(event.spanId, {
+    ...current,
+    events: [...current.events, event].sort((left, right) => bigintToNumber(left.startTime - right.startTime))
+  })
+  return nextSpans
 }
 
 function buildTraceTree(spans: Map<string, InternalSpanRecord>): TraceSpanRecord[] {
