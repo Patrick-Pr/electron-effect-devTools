@@ -1,14 +1,17 @@
-import * as Server from "@effect/experimental/DevTools/Server"
-import type * as Domain from "@effect/experimental/DevTools/Domain"
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer"
-import * as SocketServer from "@effect/platform/SocketServer"
 import * as Cause from "effect/Cause"
+import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as FiberHandle from "effect/FiberHandle"
+import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as Queue from "effect/Queue"
 import * as Stream from "effect/Stream"
 import * as SubscriptionRef from "effect/SubscriptionRef"
+import * as DevToolsServer from "effect/unstable/devtools/DevToolsServer"
+import type * as DevToolsSchema from "effect/unstable/devtools/DevToolsSchema"
+import * as SocketServer from "effect/unstable/socket/SocketServer"
 import path from "node:path"
 import { shell } from "electron"
 import type { BackendCommand, BackendSnapshot } from "../../src/lib/contracts/backend.js"
@@ -25,8 +28,8 @@ interface InternalSpanRecord {
   external: boolean
   parentId?: string
   attributes: Map<string, unknown>
-  status?: Domain.Span["status"]
-  events: Domain.SpanEvent[]
+  status?: DevToolsSchema.Span["status"]
+  events: DevToolsSchema.SpanEvent[]
 }
 
 interface ClientState {
@@ -36,7 +39,7 @@ interface ClientState {
   lastSeenAt: number
   status: "connected" | "disconnected"
   disconnectSignal: Deferred.Deferred<void>
-  request: (response: Domain.Response.WithoutPong) => Effect.Effect<void>
+  send: (response: DevToolsSchema.Response.WithoutPong) => Effect.Effect<void>
   metrics: MetricRecord[]
   spans: Map<string, InternalSpanRecord>
 }
@@ -55,8 +58,7 @@ const METRICS_POLL_INTERVAL = 500
 const CLIENT_SWEEP_INTERVAL = 1000
 const STALE_CLIENT_TIMEOUT = 10_000
 
-class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("DevtoolsBackendService", {
-  scoped: Effect.gen(function*() {
+const makeDevtoolsBackendService = Effect.gen(function*() {
     const stateRef = yield* SubscriptionRef.make(makeInitialBackendState())
     const serverHandle = yield* FiberHandle.make<void, never>()
     const metricsHandle = yield* FiberHandle.make<void, never>()
@@ -132,9 +134,9 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
           return
         }
 
-        yield* client.request({ _tag: "MetricsRequest" }).pipe(
-          Effect.catchAllCause((cause) =>
-            Cause.isInterruptedOnly(cause)
+        yield* client.send({ _tag: "MetricsRequest" }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
               ? Effect.void
               : Effect.gen(function*() {
                   yield* Effect.logError(Cause.pretty(cause))
@@ -156,7 +158,7 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
       })
     }
 
-    function ingestClientMessage(clientId: number, message: Domain.Request.WithoutPing): Effect.Effect<void> {
+    function ingestClientMessage(clientId: number, message: DevToolsSchema.Request.WithoutPing): Effect.Effect<void> {
       return Effect.gen(function*() {
         const shouldRefreshMetrics = yield* SubscriptionRef.modify(stateRef, (state) => {
           const client = state.clients.get(clientId)
@@ -178,7 +180,7 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
       })
     }
 
-    function addClient(client: Server.Client, disconnectSignal: Deferred.Deferred<void>): Effect.Effect<number> {
+    function addClient(client: DevToolsServer.Client, disconnectSignal: Deferred.Deferred<void>): Effect.Effect<number> {
       return Effect.gen(function*() {
         const id = yield* SubscriptionRef.modify(stateRef, (state) => {
           const nextId = state.nextClientId
@@ -190,7 +192,7 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
             lastSeenAt: now,
             status: "connected",
             disconnectSignal,
-            request: client.request,
+            send: client.send,
             metrics: [],
             spans: new Map()
           }
@@ -209,7 +211,7 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
       })
     }
 
-    function handleClient(client: Server.Client) {
+    function handleClient(client: DevToolsServer.Client) {
       return Effect.gen(function*() {
         const disconnectSignal = yield* Deferred.make<void>()
         const clientId = yield* addClient(client, disconnectSignal)
@@ -222,17 +224,17 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
             }
           }))
 
-        yield* client.queue.take.pipe(
+        yield* Queue.take(client.queue).pipe(
           Effect.flatMap((message) => ingestClientMessage(clientId, message)),
           Effect.forever,
           Effect.race(Deferred.await(disconnectSignal)),
-          Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause) ? Effect.void : Effect.logError(Cause.pretty(cause)))
+          Effect.catchCause((cause) => Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logError(Cause.pretty(cause)))
         )
       })
     }
 
     return {
-      changes: stateRef.changes.pipe(Stream.map(createBackendSnapshot)),
+      changes: SubscriptionRef.changes(stateRef).pipe(Stream.map(createBackendSnapshot)),
       snapshot: SubscriptionRef.get(stateRef).pipe(Effect.map(createBackendSnapshot)),
       startServer: Effect.gen(function*() {
         const state = yield* SubscriptionRef.get(stateRef)
@@ -251,7 +253,7 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
           }
         }))
 
-        const serverProgram = Server.run(handleClient).pipe(
+        const serverProgram = DevToolsServer.run(handleClient).pipe(
           Effect.provideServiceEffect(
             SocketServer.SocketServer,
             NodeSocketServer.makeWebSocket({ port }).pipe(
@@ -264,13 +266,13 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
                     error: undefined,
                     message: `Server listening on port ${currentState.runningState.port}`
                   }
-                })).pipe(Effect.zipRight(reconcileBackgroundFibers()))
+                })).pipe(Effect.andThen(reconcileBackgroundFibers()))
               )
             )
           ),
           Effect.scoped,
-          Effect.catchAllCause((cause) =>
-            Cause.isInterruptedOnly(cause)
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
               ? Effect.void
               : Effect.gen(function*() {
                   yield* Effect.logError(Cause.pretty(cause))
@@ -311,7 +313,7 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
             ...state,
             activeClientId: client && isClientConnected(client) ? clientId : state.activeClientId
           })
-        }).pipe(Effect.zipRight(refreshMetricsPolling())),
+        }).pipe(Effect.andThen(refreshMetricsPolling())),
       disconnectClient: (clientId: number) =>
         Effect.gen(function*() {
           const disconnectSignal = yield* SubscriptionRef.modify(stateRef, (state) => {
@@ -326,13 +328,13 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
 
           if (disconnectSignal) {
             yield* Deferred.succeed(disconnectSignal, void 0).pipe(
-              Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause) ? Effect.void : Effect.logWarning(Cause.pretty(cause)))
+              Effect.catchCause((cause) => Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logWarning(Cause.pretty(cause)))
             )
             yield* reconcileBackgroundFibers()
           }
         }),
       removeClient: (clientId: number) =>
-        updateState((state) => removeClientById(state, clientId)).pipe(Effect.zipRight(refreshMetricsPolling())),
+        updateState((state) => removeClientById(state, clientId)).pipe(Effect.andThen(refreshMetricsPolling())),
       resetMetrics: Effect.gen(function*() {
         const clientId = yield* SubscriptionRef.modify(stateRef, (state) => {
           const selectedClient = getSelectedClient(state)
@@ -365,11 +367,19 @@ class DevtoolsBackendService extends Effect.Service<DevtoolsBackendService>()("D
       })
     }
   })
-}) {}
+
+type DevtoolsBackendServiceApi = Effect.Success<typeof makeDevtoolsBackendService>
+
+class DevtoolsBackendService extends Context.Service<DevtoolsBackendService, DevtoolsBackendServiceApi>()(
+  "DevtoolsBackendService",
+  { make: makeDevtoolsBackendService }
+) {}
+
+const DevtoolsBackendServiceLayer = Layer.effect(DevtoolsBackendService, DevtoolsBackendService.make)
 
 export class DevtoolsBackend {
   private readonly listeners = new Set<(snapshot: BackendSnapshot) => void>()
-  private readonly runtime = ManagedRuntime.make(DevtoolsBackendService.Default)
+  private readonly runtime = ManagedRuntime.make(DevtoolsBackendServiceLayer)
   private latestSnapshot = createBackendSnapshot(makeInitialBackendState())
 
   constructor() {
@@ -441,7 +451,7 @@ export class DevtoolsBackend {
     await this.runtime.dispose()
   }
 
-  private async runCommand(run: (service: DevtoolsBackendService) => Effect.Effect<void>): Promise<void> {
+  private async runCommand(run: (service: DevtoolsBackendServiceApi) => Effect.Effect<void>): Promise<void> {
     await this.runtime.runPromise(Effect.flatMap(DevtoolsBackendService, run))
     this.latestSnapshot = await this.runtime.runPromise(Effect.flatMap(DevtoolsBackendService, (service) => service.snapshot))
   }
@@ -592,7 +602,7 @@ function sweepDisconnectedClients(state: BackendState): readonly [boolean, Backe
 function applyClientMessage(
   state: BackendState,
   clientId: number,
-  message: Domain.Request.WithoutPing
+  message: DevToolsSchema.Request.WithoutPing
 ): BackendState {
   const client = state.clients.get(clientId)
   if (!client) {
@@ -647,46 +657,46 @@ function createTracerSnapshot(client: ClientState | undefined): BackendSnapshot[
   return { spans: roots, events }
 }
 
-function toMetricRecord(metric: Domain.Metric): MetricRecord {
-  const tags = metric.tags.map((tag) => ({ key: tag.key, value: tag.value }))
-  const unit = metric.tags.find((tag) => tag.key === "unit" || tag.key === "time_unit")?.value
+function toMetricRecord(metric: DevToolsSchema.Metric): MetricRecord {
+  const tags = Object.entries(metric.attributes ?? {}).map(([key, value]) => ({ key, value }))
+  const unit = metric.attributes?.unit ?? metric.attributes?.time_unit
   const unitSuffix = unit ? ` ${unit}` : ""
 
-  switch (metric._tag) {
+  switch (metric.type) {
     case "Counter":
       return {
-        id: metric.name,
-        name: metric.name,
-        kind: metric._tag,
+        id: metric.id,
+        name: metric.id,
+        kind: metric.type,
         description: `${formatMetricNumber(metric.state.count)}${unitSuffix}`,
         tags,
         details: [{ key: "Count", value: `${formatMetricNumber(metric.state.count)}${unitSuffix}` }]
       }
     case "Gauge":
       return {
-        id: metric.name,
-        name: metric.name,
-        kind: metric._tag,
+        id: metric.id,
+        name: metric.id,
+        kind: metric.type,
         description: `${formatMetricNumber(metric.state.value)}${unitSuffix}`,
         tags,
         details: [{ key: "Value", value: `${formatMetricNumber(metric.state.value)}${unitSuffix}` }]
       }
     case "Frequency":
       return {
-        id: metric.name,
-        name: metric.name,
-        kind: metric._tag,
-        description: `${Object.keys(metric.state.occurrences).length} buckets`,
+        id: metric.id,
+        name: metric.id,
+        kind: metric.type,
+        description: `${metric.state.occurrences.size} buckets`,
         tags,
-        details: Object.entries(metric.state.occurrences)
+        details: [...metric.state.occurrences.entries()]
           .sort(([left], [right]) => left.localeCompare(right))
           .map(([key, value]) => ({ key, value: String(value) }))
       }
     case "Histogram":
       return {
-        id: metric.name,
-        name: metric.name,
-        kind: metric._tag,
+        id: metric.id,
+        name: metric.id,
+        kind: metric.type,
         description: `${formatMetricNumber(metric.state.count)} samples`,
         tags,
         details: [
@@ -699,13 +709,13 @@ function toMetricRecord(metric: Domain.Metric): MetricRecord {
     case "Summary": {
       const quantiles = metric.state.quantiles.map(([quantile, value]) => ({
         key: `p${quantile * 100}`,
-        value: `${formatMetricNumber(value._tag === "Some" ? value.value : 0)}${unitSuffix}`
+        value: `${formatMetricNumber(value ?? 0)}${unitSuffix}`
       }))
 
       return {
-        id: metric.name,
-        name: metric.name,
-        kind: metric._tag,
+        id: metric.id,
+        name: metric.id,
+        kind: metric.type,
         description: quantiles[Math.floor(quantiles.length / 2)]?.value ?? `${formatMetricNumber(metric.state.count)} samples`,
         tags,
         details: [
@@ -720,7 +730,7 @@ function toMetricRecord(metric: Domain.Metric): MetricRecord {
   }
 }
 
-function registerSpan(spans: Map<string, InternalSpanRecord>, span: Domain.Span): Map<string, InternalSpanRecord> {
+function registerSpan(spans: Map<string, InternalSpanRecord>, span: DevToolsSchema.Span): Map<string, InternalSpanRecord> {
   const parentState = span.parent._tag === "Some" ? registerParentSpan(spans, span.parent.value) : [spans, undefined] as const
   const nextSpans = new Map(parentState[0])
   const current = nextSpans.get(span.spanId)
@@ -742,7 +752,7 @@ function registerSpan(spans: Map<string, InternalSpanRecord>, span: Domain.Span)
 
 function registerParentSpan(
   spans: Map<string, InternalSpanRecord>,
-  span: Domain.ParentSpan
+  span: DevToolsSchema.ParentSpan
 ): readonly [Map<string, InternalSpanRecord>, string] {
   if (span._tag === "ExternalSpan") {
     const nextSpans = new Map(spans)
@@ -764,7 +774,7 @@ function registerParentSpan(
   return [registerSpan(spans, span), span.spanId] as const
 }
 
-function registerSpanEvent(spans: Map<string, InternalSpanRecord>, event: Domain.SpanEvent): Map<string, InternalSpanRecord> {
+function registerSpanEvent(spans: Map<string, InternalSpanRecord>, event: DevToolsSchema.SpanEvent): Map<string, InternalSpanRecord> {
   const nextSpans = new Map(spans)
   const current = nextSpans.get(event.spanId)
   if (!current) {
@@ -839,7 +849,7 @@ function toTraceSpanRecord(
       id: `${span.id}-event-${index}`,
       name: event.name,
       offsetLabel: formatEventOffset(span, event),
-      attributes: Object.entries(event.attributes).map(([name, value]) => toVariableRecord(`${span.id}-${event.name}-${name}`, name, value))
+      attributes: Object.entries(event.attributes ?? {}).map(([name, value]) => toVariableRecord(`${span.id}-${event.name}-${name}`, name, value))
     })),
     children
   }
@@ -847,7 +857,7 @@ function toTraceSpanRecord(
 
 function buildTraceEvents(spans: Map<string, InternalSpanRecord>): TraceEventRecord[] {
   const timedSpans = [...spans.values()]
-    .filter((span): span is InternalSpanRecord & { status: Domain.Span["status"] } => span.status !== undefined)
+    .filter((span): span is InternalSpanRecord & { status: DevToolsSchema.Span["status"] } => span.status !== undefined)
     .filter(isEndedSpan)
     .sort(compareSpanStart)
 
@@ -899,7 +909,7 @@ function formatSpanDuration(span: InternalSpanRecord): string | undefined {
   return formatMilliseconds(bigintToNumber(span.status.endTime - span.status.startTime) / 1_000_000)
 }
 
-function formatEventOffset(span: InternalSpanRecord, event: Domain.SpanEvent): string {
+function formatEventOffset(span: InternalSpanRecord, event: DevToolsSchema.SpanEvent): string {
   if (!span.status) {
     return "+0 ms"
   }
@@ -1019,7 +1029,7 @@ function summarizeCause(detail: string): string {
 const TRACE_COLORS = ["#2f81f7", "#238636", "#db6d28", "#d29922", "#f85149"]
 
 function isEndedSpan(
-  span: InternalSpanRecord & { status: Domain.Span["status"] }
-): span is InternalSpanRecord & { status: Extract<Domain.Span["status"], { _tag: "Ended" }> } {
+  span: InternalSpanRecord & { status: DevToolsSchema.Span["status"] }
+): span is InternalSpanRecord & { status: Extract<DevToolsSchema.Span["status"], { _tag: "Ended" }> } {
   return span.status._tag === "Ended"
 }
