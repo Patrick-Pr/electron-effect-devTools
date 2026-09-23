@@ -20,6 +20,7 @@ import type { DebugStateSnapshot, LocationRecord, VariableRecord } from "../../s
 import type { MetricRecord } from "../../src/lib/contracts/metrics.js"
 import type { TraceEventRecord, TraceSpanRecord } from "../../src/lib/contracts/tracer.js"
 import { DebugSessionAdapter } from "./debug-session-adapter.js"
+import { makeDevtoolsWebSocketOptions } from "./devtools-websocket-options.js"
 
 interface InternalSpanRecord {
   id: string
@@ -257,7 +258,7 @@ const makeDevtoolsBackendService = Effect.gen(function*() {
         const serverProgram = DevToolsServer.run(handleClient).pipe(
           Effect.provideServiceEffect(
             SocketServer.SocketServer,
-            NodeSocketServer.makeWebSocket({ port }).pipe(
+            NodeSocketServer.makeWebSocket(makeDevtoolsWebSocketOptions(port)).pipe(
               Effect.tap(() =>
                 updateState((currentState) => ({
                   ...currentState,
