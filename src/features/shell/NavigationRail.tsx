@@ -47,6 +47,15 @@ const items: { view: AppView; label: string; icon: React.ReactNode }[] = [
         <rect x="14" y="3" width="3" height="14" rx="0.5" />
       </svg>
     )
+  },
+  {
+    view: "debug",
+    label: "Debug",
+    icon: (
+      <svg width="32" height="32" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="10" cy="11" r="5" /><path d="M7 5V3M13 5V3M5 8H2M18 8h-3M5 12H2M18 12h-3M8 9v4M12 9v4" />
+      </svg>
+    )
   }
 ]
 
@@ -61,18 +70,19 @@ function NavItem({ view, label, icon, active, onSelect }: {
     <button
       className={clsx(
         "w-14 h-14 flex flex-col items-center justify-center gap-0.5 border-none rounded-md cursor-pointer p-0 relative",
-        "transition-[background,color] duration-(--transition-fast)",
+        "transition-[background,color] duration-(--transition-fast-duration) ease-(--transition-ease)",
         active
           ? "bg-subtle-active text-primary"
           : "bg-transparent text-secondary hover:bg-subtle-hover"
       )}
       title={label}
       onClick={() => onSelect(view)}
+      aria-current={active ? "page" : undefined}
     >
       <span
         className={clsx(
           "absolute -left-1.25 top-1/2 -translate-y-1/2 w-0.75 h-4 rounded-r-[2px] bg-accent-blue",
-          "transition-opacity duration-(--transition-fast)",
+          "transition-opacity duration-(--transition-fast-duration) ease-(--transition-ease)",
           active ? "opacity-100" : "opacity-0"
         )}
       />

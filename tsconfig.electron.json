@@ -10,5 +10,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["electron/**/*.ts", "electron/**/*.cts", "src/lib/contracts/**/*.ts"]
+  "include": ["electron/**/*.ts", "electron/**/*.cts", "src/lib/contracts/**/*.ts"],
+  "exclude": ["electron/**/*.test.ts"]
 }

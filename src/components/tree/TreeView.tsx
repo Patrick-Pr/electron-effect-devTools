@@ -32,7 +32,7 @@ function renderNodes(
   toggle: (id: string) => void
 ): React.ReactNode[] {
   return nodes.map((node) => {
-    const hasChildren = (node.children?.length ?? 0) > 0
+    const hasChildren = node.hasChildren ?? (node.children?.length ?? 0) > 0
     const expanded = expandedIds.has(node.id)
 
     return (
@@ -42,9 +42,16 @@ function renderNodes(
           depth={depth}
           expanded={expanded}
           hasChildren={hasChildren}
-          onToggle={() => toggle(node.id)}
+          onToggle={() => {
+            if (!expanded) node.onExpand?.()
+            toggle(node.id)
+          }}
         />
-        {expanded && hasChildren && renderNodes(node.children!, depth + 1, expandedIds, toggle)}
+        {expanded && hasChildren && (
+          <div id={`tree-children-${node.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`}>
+            {renderNodes(node.children ?? [], depth + 1, expandedIds, toggle)}
+          </div>
+        )}
       </div>
     )
   })

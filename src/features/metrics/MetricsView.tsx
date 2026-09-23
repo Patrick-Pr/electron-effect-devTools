@@ -20,17 +20,22 @@ function MetricCard({ metric }: { metric: MetricRecord }) {
 
   const hasTags = metric.tags.length > 0
   const hasDetails = metric.details.length > 0
+  const hasContent = hasTags || hasDetails
+  const regionId = `metric-details-${metric.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`
 
   return (
     <div className="border-b border-border-muted">
-      <div
-        className="flex items-center gap-2 py-3 px-4 cursor-pointer select-none transition-[background] duration-(--transition-fast) hover:bg-subtle-hover"
-        onClick={() => setExpanded(!expanded)}
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 py-3 px-4 border-0 bg-transparent text-left cursor-pointer select-none transition-[background] duration-(--transition-fast-duration) ease-(--transition-ease) hover:bg-subtle-hover"
+        onClick={() => { if (hasContent) setExpanded(!expanded) }}
+        aria-expanded={hasContent ? expanded : undefined}
+        aria-controls={hasContent ? regionId : undefined}
       >
         <span
           className={clsx(
             "size-3.5 text-tertiary shrink-0",
-            "transition-transform duration-(--transition-fast)",
+            "transition-transform duration-(--transition-fast-duration) ease-(--transition-ease)",
             expanded && "rotate-90"
           )}
         >
@@ -41,9 +46,9 @@ function MetricCard({ metric }: { metric: MetricRecord }) {
         <span className="flex-1 text-md text-primary truncate font-mono">{metric.name}</span>
         <Badge variant={metric.kind}>{metric.kind}</Badge>
         <span className="text-xs text-secondary font-mono shrink-0">{metric.description}</span>
-      </div>
-      {expanded && (hasTags || hasDetails) && (
-        <div className="flex flex-col gap-1 px-4 pb-3" style={{ paddingLeft: 38 }}>
+      </button>
+      {expanded && hasContent && (
+        <div id={regionId} className="flex flex-col gap-1 px-4 pb-3" style={{ paddingLeft: 38 }}>
           {hasTags && (
             <div className="mb-1">
               <div className="text-xs text-tertiary mb-1 uppercase tracking-[0.05em]">Tags</div>

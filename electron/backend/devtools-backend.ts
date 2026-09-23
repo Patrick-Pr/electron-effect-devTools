@@ -16,9 +16,10 @@ import path from "node:path"
 import { shell } from "electron"
 import type { BackendCommand, BackendSnapshot } from "../../src/lib/contracts/backend.js"
 import type { ClientRecord, RunningState } from "../../src/lib/contracts/clients.js"
-import type { LocationRecord, VariableRecord } from "../../src/lib/contracts/debug.js"
+import type { DebugStateSnapshot, LocationRecord, VariableRecord } from "../../src/lib/contracts/debug.js"
 import type { MetricRecord } from "../../src/lib/contracts/metrics.js"
 import type { TraceEventRecord, TraceSpanRecord } from "../../src/lib/contracts/tracer.js"
+import { DebugSessionAdapter } from "./debug-session-adapter.js"
 
 interface InternalSpanRecord {
   id: string
@@ -234,8 +235,8 @@ const makeDevtoolsBackendService = Effect.gen(function*() {
     }
 
     return {
-      changes: SubscriptionRef.changes(stateRef).pipe(Stream.map(createBackendSnapshot)),
-      snapshot: SubscriptionRef.get(stateRef).pipe(Effect.map(createBackendSnapshot)),
+      changes: SubscriptionRef.changes(stateRef).pipe(Stream.map((state) => createBackendSnapshot(state))),
+      snapshot: SubscriptionRef.get(stateRef).pipe(Effect.map((state) => createBackendSnapshot(state))),
       startServer: Effect.gen(function*() {
         const state = yield* SubscriptionRef.get(stateRef)
         if (state.runningState.running || state.runningState.message.startsWith("Starting server on port ")) {
@@ -380,19 +381,23 @@ const DevtoolsBackendServiceLayer = Layer.effect(DevtoolsBackendService, Devtool
 export class DevtoolsBackend {
   private readonly listeners = new Set<(snapshot: BackendSnapshot) => void>()
   private readonly runtime = ManagedRuntime.make(DevtoolsBackendServiceLayer)
-  private latestSnapshot = createBackendSnapshot(makeInitialBackendState())
+  private readonly debugAdapter = new DebugSessionAdapter()
+  private latestSnapshot = createBackendSnapshot(makeInitialBackendState(), this.debugAdapter.getSnapshot())
 
   constructor() {
+    this.debugAdapter.subscribe((debug) => {
+      this.latestSnapshot = { ...this.latestSnapshot, debug }
+      this.emitSnapshot()
+    })
+    this.debugAdapter.start()
     this.runtime.runFork(
       Stream.unwrap(
         Effect.map(DevtoolsBackendService, (service) => service.changes)
       ).pipe(
         Stream.runForEach((snapshot) =>
           Effect.sync(() => {
-            this.latestSnapshot = snapshot
-            for (const listener of this.listeners) {
-              listener(snapshot)
-            }
+            this.latestSnapshot = { ...snapshot, debug: this.debugAdapter.getSnapshot() }
+            this.emitSnapshot()
           }))
       )
     )
@@ -443,17 +448,38 @@ export class DevtoolsBackend {
       }
       case "reveal-location": {
         await this.revealLocation(command.location)
+        return
+      }
+      case "debug:variables:load": {
+        await this.debugAdapter.loadVariables(command.variableId)
+        return
+      }
+      case "debug:fiber:interrupt": {
+        await this.debugAdapter.interruptFiber(command.fiberId)
+        return
+      }
+      case "debug:breakpoints:toggle-pause-on-defects": {
+        await this.debugAdapter.togglePauseOnDefects()
+        return
+      }
+      case "debug:span-stack:set-ignore-list-enabled": {
+        this.debugAdapter.setSpanStackIgnoreListEnabled(command.enabled)
+        return
+      }
+      case "debug:snapshot:refresh": {
+        await this.debugAdapter.refresh()
       }
     }
   }
 
   async dispose(): Promise<void> {
-    await this.runtime.dispose()
+    await Promise.all([this.runtime.dispose(), this.debugAdapter.dispose()])
   }
 
   private async runCommand(run: (service: DevtoolsBackendServiceApi) => Effect.Effect<void>): Promise<void> {
     await this.runtime.runPromise(Effect.flatMap(DevtoolsBackendService, run))
-    this.latestSnapshot = await this.runtime.runPromise(Effect.flatMap(DevtoolsBackendService, (service) => service.snapshot))
+    const snapshot = await this.runtime.runPromise(Effect.flatMap(DevtoolsBackendService, (service) => service.snapshot))
+    this.latestSnapshot = { ...snapshot, debug: this.debugAdapter.getSnapshot() }
   }
 
   private async revealLocation(location: LocationRecord): Promise<void> {
@@ -465,6 +491,10 @@ export class DevtoolsBackend {
     if (openResult) {
       shell.showItemInFolder(absolutePath)
     }
+  }
+
+  private emitSnapshot(): void {
+    for (const listener of this.listeners) listener(this.latestSnapshot)
   }
 }
 
@@ -481,7 +511,7 @@ function makeInitialBackendState(): BackendState {
   }
 }
 
-function createBackendSnapshot(state: BackendState): BackendSnapshot {
+function createBackendSnapshot(state: BackendState, debug?: DebugStateSnapshot): BackendSnapshot {
   const selectedClient = getSelectedClient(state)
 
   return {
@@ -496,7 +526,17 @@ function createBackendSnapshot(state: BackendState): BackendSnapshot {
     metrics: {
       metrics: selectedClient?.metrics ?? []
     },
-    tracer: createTracerSnapshot(selectedClient)
+    tracer: createTracerSnapshot(selectedClient),
+    debug: debug ?? {
+      status: "unavailable",
+      message: "Starting debug-session bridge...",
+      bridgePort: 34438,
+      context: [],
+      spanStack: [],
+      spanStackIgnoreListEnabled: true,
+      fibers: [],
+      breakpoints: { pauseOnDefects: false, values: [] }
+    }
   }
 }
 
@@ -549,10 +589,6 @@ function ensureActiveClientSelection(state: BackendState): BackendState {
       ...state,
       activeClientId: firstConnected.id
     }
-  }
-
-  if (selected) {
-    return state
   }
 
   return {

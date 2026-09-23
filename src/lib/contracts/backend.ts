@@ -1,5 +1,5 @@
 import type { ClientRecord, RunningState } from "./clients.js"
-import type { LocationRecord } from "./debug.js"
+import type { DebugStateSnapshot, LocationRecord } from "./debug.js"
 import type { MetricRecord } from "./metrics.js"
 import type { TraceEventRecord, TraceSpanRecord } from "./tracer.js"
 
@@ -23,6 +23,7 @@ export interface BackendSnapshot {
   clients: ClientsStateSnapshot
   metrics: MetricsStateSnapshot
   tracer: TracerStateSnapshot
+  debug: DebugStateSnapshot
 }
 
 export type BackendCommand =
@@ -35,6 +36,11 @@ export type BackendCommand =
   | { type: "tracer:reset" }
   | { type: "timeline:reset" }
   | { type: "reveal-location"; location: LocationRecord }
+  | { type: "debug:variables:load"; variableId: string }
+  | { type: "debug:fiber:interrupt"; fiberId: string }
+  | { type: "debug:breakpoints:toggle-pause-on-defects" }
+  | { type: "debug:span-stack:set-ignore-list-enabled"; enabled: boolean }
+  | { type: "debug:snapshot:refresh" }
 
 export type BackendSubscriptionEvent = {
   type: "backend:state"

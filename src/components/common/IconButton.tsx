@@ -18,7 +18,7 @@ export function IconButton({ children, title, onClick, danger, disabled }: IconB
     <button
       className={clsx(
         "inline-flex items-center justify-center size-6.5 border-none rounded-sm bg-transparent text-secondary cursor-pointer p-0",
-        "transition-[background,color] duration-(--transition-fast)",
+        "transition-[background,color] duration-(--transition-fast-duration) ease-(--transition-ease)",
         disabled
           ? "opacity-40 cursor-default"
           : [

@@ -18,6 +18,16 @@ const initialSnapshot: BackendSnapshot = {
   tracer: {
     spans: [],
     events: []
+  },
+  debug: {
+    status: "unavailable",
+    message: "Starting debug-session bridge...",
+    bridgePort: 34438,
+    context: [],
+    spanStack: [],
+    spanStackIgnoreListEnabled: true,
+    fibers: [],
+    breakpoints: { pauseOnDefects: false, values: [] }
   }
 }
 

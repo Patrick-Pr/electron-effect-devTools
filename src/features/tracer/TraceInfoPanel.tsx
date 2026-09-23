@@ -4,21 +4,10 @@ import { formatMs } from "./trace-viewer-utils"
 
 interface TraceInfoPanelProps {
   selectedEvent: TraceEventRecord | null
-  spans: TraceSpanRecord[]
+  selectedSpan: TraceSpanRecord | null
 }
 
-function findSpan(spans: TraceSpanRecord[], eventId: string): TraceSpanRecord | undefined {
-  for (const span of spans) {
-    if (span.id === eventId) return span
-    if (span.children) {
-      const found = findSpan(span.children, eventId)
-      if (found) return found
-    }
-  }
-  return undefined
-}
-
-export function TraceInfoPanel({ selectedEvent, spans }: TraceInfoPanelProps) {
+export function TraceInfoPanel({ selectedEvent, selectedSpan: span }: TraceInfoPanelProps) {
   if (!selectedEvent) {
     return (
       <div className="h-full overflow-auto bg-surface border-l border-border">
@@ -27,7 +16,6 @@ export function TraceInfoPanel({ selectedEvent, spans }: TraceInfoPanelProps) {
     )
   }
 
-  const span = findSpan(spans, selectedEvent.id)
   const duration = selectedEvent.endTime - selectedEvent.startTime
 
   return (
@@ -76,12 +64,14 @@ export function TraceInfoPanel({ selectedEvent, spans }: TraceInfoPanelProps) {
             {span.location && (
               <div className="mb-3">
                 <div className="text-xs text-secondary mb-0.5">Location</div>
-                <div
-                  className="text-sm font-mono break-all text-link cursor-pointer"
+                <button
+                  type="button"
+                  className="text-left border-0 bg-transparent p-0 text-sm font-mono break-all text-link cursor-pointer"
                   onClick={() => window.electronAPI.revealLocation(span.location!)}
+                  aria-label={`Reveal ${span.name} at ${span.location.path}:${span.location.line}:${span.location.column}`}
                 >
                   {span.location.path}:{span.location.line}:{span.location.column}
-                </div>
+                </button>
               </div>
             )}
 

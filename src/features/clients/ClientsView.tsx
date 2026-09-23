@@ -40,38 +40,45 @@ function ClientRow({ client }: { client: ClientRecord }) {
   return (
     <div
       className={clsx(
-        "group flex items-center gap-3 py-3 px-4 cursor-pointer border-b border-border-muted",
-        "transition-[background] duration-(--transition-fast)",
+        "group flex items-center gap-2 border-b border-border-muted",
+        "transition-[background] duration-(--transition-fast-duration) ease-(--transition-ease)",
         client.active
           ? "bg-accent-blue/10 border-l-[3px] border-l-accent-blue"
           : "border-l-[3px] border-l-transparent hover:bg-subtle-hover"
       )}
-      onClick={handleSelect}
     >
-      <div
-        className={clsx(
-          "size-2 rounded-full shrink-0",
-          connected
-            ? "bg-status-ok shadow-[0_0_4px_var(--color-status-ok)]"
-            : "bg-tertiary"
-        )}
-        title={client.status}
-      />
-      <div className="flex-1 min-w-0">
-        <div className="font-medium text-md text-primary truncate">{client.name}</div>
-        <div className="flex gap-2 items-center mt-0.5">
-          <Badge variant={client.transport}>{client.transport}</Badge>
-          {client.pid && <span className="text-xs text-tertiary font-mono">PID {client.pid}</span>}
-          {client.lastSeen && <span className="text-xs text-tertiary font-mono">{client.lastSeen}</span>}
-        </div>
-      </div>
-      <div className="hidden group-hover:flex gap-1 shrink-0">
+      <button
+        type="button"
+        className="flex flex-1 items-center gap-3 py-3 pl-3 min-w-0 border-0 bg-transparent text-left cursor-pointer disabled:cursor-default"
+        onClick={handleSelect}
+        disabled={!connected}
+        aria-current={client.active ? "true" : undefined}
+        aria-label={`${client.name}, ${client.status}`}
+      >
+        <span
+          className={clsx(
+            "size-2 rounded-full shrink-0",
+            connected ? "bg-status-ok shadow-[0_0_4px_var(--color-status-ok)]" : "bg-tertiary"
+          )}
+          aria-hidden="true"
+        />
+        <span className="flex-1 min-w-0">
+          <span className="block font-medium text-md text-primary truncate">{client.name}</span>
+          <span className="flex gap-2 items-center mt-0.5">
+            <span className="sr-only">{client.status}. </span>
+            <Badge variant={client.transport}>{client.transport}</Badge>
+            {client.pid && <span className="text-xs text-tertiary font-mono">PID {client.pid}</span>}
+            {client.lastSeen && <span className="text-xs text-tertiary font-mono">{client.lastSeen}</span>}
+          </span>
+        </span>
+      </button>
+      <div className="opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto flex gap-1 shrink-0 pr-3 transition-opacity duration-(--transition-fast-duration) ease-(--transition-ease)">
         {connected && (
-          <IconButton title="Disconnect" onClick={handleDisconnect}>
+          <IconButton title={`Disconnect ${client.name}`} onClick={handleDisconnect}>
             <DisconnectIcon />
           </IconButton>
         )}
-        <IconButton title="Remove" onClick={handleRemove} danger>
+        <IconButton title={`Remove ${client.name}`} onClick={handleRemove} danger>
           <RemoveIcon />
         </IconButton>
       </div>

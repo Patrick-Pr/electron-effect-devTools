@@ -27,6 +27,7 @@ function SpanNode({ span, depth }: { span: TraceSpanRecord; depth: number }) {
   const hasContent = (span.children && span.children.length > 0) ||
     span.attributes.length > 0 ||
     span.events.length > 0
+  const regionId = `span-content-${span.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`
 
   const handleReveal = useCallback(() => {
     if (span.location) {
@@ -38,42 +39,47 @@ function SpanNode({ span, depth }: { span: TraceSpanRecord; depth: number }) {
     <div>
       <div
         className={clsx(
-          "flex items-center gap-2 h-(--row-height) pr-3 select-none",
-          "transition-[background] duration-(--transition-fast)",
+          "flex items-center h-(--row-height) pr-3 select-none",
+          "transition-[background] duration-(--transition-fast-duration) ease-(--transition-ease)",
           "hover:bg-subtle-hover",
           hasContent ? "cursor-pointer" : "cursor-default"
         )}
         style={{ paddingLeft: depth * 16 + 8 }}
-        onClick={() => { if (hasContent) setExpanded(!expanded) }}
       >
-        <span
-          className={clsx(
-            "size-3.5 text-tertiary shrink-0",
-            "transition-transform duration-(--transition-fast)",
-            expanded && "rotate-90",
-            !hasContent && "invisible"
-          )}
+        <button
+          type="button"
+          disabled={!hasContent}
+          className="flex flex-1 min-w-0 items-center gap-2 h-full border-0 bg-transparent p-0 text-left disabled:cursor-default"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={hasContent ? expanded : undefined}
+          aria-controls={hasContent ? regionId : undefined}
         >
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
-        <span className="flex-1 truncate text-sm text-primary">{span.name}</span>
-        {span.location && (
           <span
-            onClick={(e) => { e.stopPropagation(); handleReveal() }}
-            className="cursor-pointer flex"
+            className={clsx(
+              "size-3.5 text-tertiary shrink-0 transition-transform duration-(--transition-fast-duration) ease-(--transition-ease)",
+              expanded && "rotate-90",
+              !hasContent && "invisible"
+            )}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 1.5L7 5L3 8.5" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </span>
+          <span className="flex-1 truncate text-sm text-primary">{span.name}</span>
+          {span.durationLabel && <Badge color="var(--color-secondary)">{span.durationLabel}</Badge>}
+        </button>
+        {span.location && (
+          <button
+            type="button"
+            onClick={handleReveal}
+            className="cursor-pointer flex border-0 bg-transparent p-1"
             title={`${span.location.path}:${span.location.line}`}
+            aria-label={`Reveal ${span.name} at ${span.location.path}:${span.location.line}`}
           >
             <LocationIcon />
-          </span>
-        )}
-        {span.durationLabel && (
-          <Badge color="var(--color-secondary)">{span.durationLabel}</Badge>
+          </button>
         )}
       </div>
       {expanded && (
-        <>
+        <div id={regionId}>
           {span.attributes.length > 0 && (
             <AttrSection depth={depth + 1} label="Attributes">
               {span.attributes.map((attr) => (
@@ -91,7 +97,7 @@ function SpanNode({ span, depth }: { span: TraceSpanRecord; depth: number }) {
           {span.children && span.children.map((child) => (
             <SpanNode key={child.id} span={child} depth={depth + 1} />
           ))}
-        </>
+        </div>
       )}
     </div>
   )
@@ -126,26 +132,33 @@ function KVRow({ depth, name, value }: { depth: number; name: string; value: str
 function EventRow({ event, depth }: { event: SpanEventRecord; depth: number }) {
   const [expanded, setExpanded] = useState(false)
   const hasAttrs = event.attributes.length > 0
+  const regionId = `event-content-${event.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`
 
   return (
     <div>
-      <div
+      <button
+        type="button"
+        disabled={!hasAttrs}
         className={clsx(
-          "flex items-center gap-2 h-(--row-height) pr-3 text-sm select-none",
+          "flex items-center gap-2 h-(--row-height) pr-3 w-full border-0 bg-transparent text-left text-sm select-none",
           hasAttrs ? "cursor-pointer" : "cursor-default"
         )}
         style={{ paddingLeft: depth * 16 + 8 }}
-        onClick={() => { if (hasAttrs) setExpanded(!expanded) }}
+        onClick={() => setExpanded(!expanded)}
+        aria-expanded={hasAttrs ? expanded : undefined}
+        aria-controls={hasAttrs ? regionId : undefined}
       >
         <svg width="10" height="10" viewBox="0 0 10 10" fill="var(--color-accent-yellow)">
           <circle cx="5" cy="5" r="3" />
         </svg>
         <span className="text-primary flex-1 truncate">{event.name}</span>
         <span className="text-tertiary font-mono text-xs shrink-0">{event.offsetLabel}</span>
-      </div>
-      {expanded && event.attributes.map((attr) => (
-        <KVRow key={attr.id} depth={depth + 1} name={attr.name} value={attr.value} />
-      ))}
+      </button>
+      {expanded && (
+        <div id={regionId}>{event.attributes.map((attr) => (
+          <KVRow key={attr.id} depth={depth + 1} name={attr.name} value={attr.value} />
+        ))}</div>
+      )}
     </div>
   )
 }

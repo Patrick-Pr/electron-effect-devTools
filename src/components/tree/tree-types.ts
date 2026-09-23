@@ -7,5 +7,8 @@ export interface TreeNode {
   icon?: ReactNode
   badge?: ReactNode
   children?: TreeNode[]
+  hasChildren?: boolean
   onClick?: () => void
+  onExpand?: () => void
+  actions?: ReactNode
 }

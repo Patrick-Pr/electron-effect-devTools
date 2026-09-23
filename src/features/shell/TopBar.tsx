@@ -31,7 +31,7 @@ export function TopBar() {
       <div className="flex items-center gap-2">
         <div
           className={clsx(
-            "size-1.75 rounded-full shrink-0 transition-[background,box-shadow] duration-(--transition-normal)",
+            "size-1.75 rounded-full shrink-0 transition-[background,box-shadow] duration-(--transition-normal-duration) ease-(--transition-ease)",
             runningState.running
               ? "bg-status-ok shadow-[0_0_6px_var(--color-status-ok)]"
               : "bg-tertiary shadow-none"

@@ -6,6 +6,7 @@ import { MetricsView } from "./features/metrics/MetricsView"
 import { TracerTreeView } from "./features/tracer/TracerTreeView"
 import { TracerTimelineView } from "./features/tracer/TracerTimelineView"
 import { BackendProvider } from "./lib/backend/BackendProvider"
+import { DebugView } from "./features/debug/DebugView"
 
 export default function App() {
   const [activeView, setActiveView] = useState<AppView>("clients")
@@ -20,6 +21,8 @@ export default function App() {
         return <TracerTimelineView />
       case "metrics":
         return <MetricsView />
+      case "debug":
+        return <DebugView />
     }
   }, [activeView])
 
